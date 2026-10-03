@@ -91,7 +91,8 @@ def download_many(tickers, period, interval, chunk=100, pause=4.0, rounds=3, log
         missing = [t for t in todo if t not in result]
         if log:
             log(f"  round {rnd + 1}: {len(todo) - len(missing)}/{len(todo)} ok")
-        if not missing or rnd == rounds - 1:
+        # a few misses = symbols Yahoo doesn't have; only many misses look like blocking
+        if not missing or rnd == rounds - 1 or len(missing) <= max(10, 0.1 * len(todo)):
             break
         time.sleep(45 * (rnd + 1))   # let the rate limit cool down
         todo = missing

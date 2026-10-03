@@ -182,6 +182,9 @@ def run_full(limit=None, max_n=None):
         df = daily.get(u["yahoo"])
         if df is None or len(df) < 60:
             continue
+        if u["type"] != "Crypto":
+            # Yahoo adds frozen weekend candles to forex/futures - only crypto trades then
+            df = df[df.index.dayofweek < 5]
         if is_forex(u["yahoo"]):
             df = fix_forex_daily(df, hourly_fx.get(u["yahoo"]))
         wk = resample(df, "W-MON")

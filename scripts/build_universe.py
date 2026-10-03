@@ -213,6 +213,7 @@ if __name__ == "__main__":
     if "--verify" in sys.argv:
         uni = verify(uni)
     path = os.path.join(ROOT, "state", "universe.json") if "--to-state" in sys.argv else os.path.join(ROOT, "universe.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(uni, fh, ensure_ascii=False, indent=0)
     from collections import Counter

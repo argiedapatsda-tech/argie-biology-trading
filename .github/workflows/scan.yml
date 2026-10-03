@@ -10,7 +10,7 @@ on:
     inputs:
       max:
         description: "Instruments in this run's daily slice"
-        default: "400"
+        default: "600"
 
 permissions:
   contents: read
@@ -63,7 +63,7 @@ jobs:
 
       - name: Daily scan slice
         continue-on-error: true
-        run: python run.py full --max ${{ github.event.inputs.max || '400' }}
+        run: python run.py full --max ${{ github.event.inputs.max || '600' }}
 
       - name: Save data for the next run
         if: always()
