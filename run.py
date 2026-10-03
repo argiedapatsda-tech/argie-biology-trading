@@ -119,6 +119,8 @@ def merge_detail(xtb, meta, tf_details):
 def load_universe(limit=None):
     # the monthly refresh writes state/universe.json; the committed copy is the fallback
     uni = read_json(os.path.join(STATE, "universe.json"), []) or read_json(os.path.join(ROOT, "universe.json"), [])
+    # Thai SET stocks (TradingView mode only), built by scripts/build_tv_map.py
+    uni = uni + (read_json(os.path.join(STATE, "universe_th.json"), []) or read_json(os.path.join(ROOT, "universe_th.json"), []))
     uni = [u for u in uni if u.get("ok", True)]
     if limit:
         # small test sample: keep every non-stock + the first N stocks/ETFs
@@ -129,7 +131,7 @@ def load_universe(limit=None):
 
 
 def meta_of(u):
-    return {k: u.get(k) for k in ("xtb", "yahoo", "name", "type", "market", "currency", "cfd", "real")}
+    return {k: u.get(k) for k in ("xtb", "yahoo", "name", "type", "market", "currency", "cfd", "real", "tvonly")}
 
 
 # ---------------------------------------------------------------- full scan
@@ -149,6 +151,8 @@ def pick_slice(uni, max_n):
     def priority(u):  # on equal age: non-stocks, then CFD stocks, US first
         if u["type"] not in ("Stocks", "ETFs"):
             return 0
+        if u.get("tvonly"):
+            return 2
         return (1 if u.get("cfd") else 3) + (0 if u["market"] == "USA" else 1)
     pool.sort(key=lambda u: (upd.get(u["yahoo"], 0), priority(u)))
     return pool[:max_n]
@@ -202,6 +206,8 @@ def run_full(limit=None, max_n=None):
             collected["1wk"].append(ow)
         row = {"x": u["xtb"], "y": u["yahoo"], "n": u["name"], "ty": u["type"], "m": u["market"],
                "cur": u.get("currency"), "cfd": u.get("cfd"), "real": u.get("real"), "d": sd}
+        if u.get("tvonly"):
+            row["tvo"] = 1  # hidden in XTB mode
         if sw:
             row["w"] = {k: sw[k] for k in ("b", "s", "r", "tr", "pat", "t")}
         rows.append(row)
@@ -242,7 +248,7 @@ def run_full(limit=None, max_n=None):
 def choose_fast(rows):
     """Every non-stock instrument + the strongest liquid CFD stocks/ETFs right now."""
     fast = [r for r in rows if r["ty"] not in ("Stocks", "ETFs")]
-    cands = [r for r in rows if r["ty"] in ("Stocks", "ETFs") and r.get("cfd")
+    cands = [r for r in rows if r["ty"] in ("Stocks", "ETFs") and r.get("cfd") and not r.get("tvo")
              and (r["d"].get("lq") or 0) >= FAST_MIN_LIQ]
     cands.sort(key=lambda r: -max(r["d"].get("b") or 0, r["d"].get("s") or 0))
     fast += cands[:FAST_SIZE]

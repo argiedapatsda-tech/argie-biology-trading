@@ -1,8 +1,12 @@
 name: scan
 
-# Every 30 minutes: refresh the fast-watch list (15m/1H/4H) and one slice of the
+# About every 15 minutes: refresh the fast-watch list (15m/1H/4H) and one slice of the
 # daily scan, then publish the website. Price history is kept between runs in the
 # Actions cache so each run only downloads the last few days from Yahoo.
+#
+# GitHub's own timer (schedule) is unreliable - it often skips hours - so each run
+# starts the next one itself (last step). The schedule stays as a backup that
+# restarts the chain if it ever breaks. Set the repo variable CHAIN=off to stop it.
 on:
   schedule:
     - cron: "7,37 * * * *"
@@ -14,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
   pages: write
   id-token: write
 
@@ -57,6 +62,13 @@ jobs:
             python scripts/build_universe.py --download --to-state
           fi
 
+      - name: Refresh TradingView symbols + Thai SET list (weekly)
+        continue-on-error: true
+        run: |
+          if [ ! -f state/tv.json ] || [ -n "$(find state/tv.json -mtime +7)" ]; then
+            python scripts/build_tv_map.py --to-state
+          fi
+
       - name: Fast scan (15m / 1H / 4H)
         continue-on-error: true
         run: python run.py fast
@@ -74,9 +86,27 @@ jobs:
             site/data
           key: data-${{ github.run_id }}
 
+      - name: Use the fresh TradingView map
+        run: if [ -f state/tv.json ]; then cp state/tv.json site/tv.json; fi
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Start the next run (in about 15 minutes)
+        if: always() && vars.CHAIN != 'off'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 600
+          # skip if another run is already waiting, so chains never pile up
+          waiting=$(gh run list -R "$GITHUB_REPOSITORY" -w scan.yml -s queued --json databaseId -q length)
+          pending=$(gh run list -R "$GITHUB_REPOSITORY" -w scan.yml -s pending --json databaseId -q length)
+          if [ "${waiting:-0}" = "0" ] && [ "${pending:-0}" = "0" ]; then
+            gh workflow run scan.yml -R "$GITHUB_REPOSITORY" --ref main
+          else
+            echo "another run is already queued - not starting one"
+          fi

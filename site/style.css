@@ -127,3 +127,37 @@ footer.foot{max-width:1280px;margin:0 auto;padding:20px var(--pad) 40px;color:va
   .grid2{grid-template-columns:1fr}
   .row{padding:11px 12px}
 }
+
+/* ---------- live prices ---------- */
+.pill.live{display:inline-flex;align-items:center;gap:6px;color:var(--up);border-color:rgba(46,194,126,.35)}
+.pill.live i{width:7px;height:7px;border-radius:50%;background:var(--up);box-shadow:0 0 0 0 rgba(46,194,126,.6);animation:pulse 2s infinite}
+.pill.live.off{color:var(--faint);border-color:var(--line)}
+.pill.live.off i{background:var(--faint);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,194,126,.55)}70%{box-shadow:0 0 0 7px rgba(46,194,126,0)}100%{box-shadow:0 0 0 0 rgba(46,194,126,0)}}
+.fl-up .lp{animation:flup 1.2s ease-out} .fl-down .lp{animation:fldown 1.2s ease-out}
+@keyframes flup{0%{background:rgba(46,194,126,.45);color:#fff}100%{background:transparent}}
+@keyframes fldown{0%{background:rgba(240,85,90,.45);color:#fff}100%{background:transparent}}
+.lp{border-radius:4px;padding:0 2px}
+.tape{overflow:hidden;border-top:1px solid var(--line);background:var(--bg2);white-space:nowrap;mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
+.tape-in{display:inline-flex;animation:tape 60s linear infinite;padding:5px 0}
+.tape:hover .tape-in{animation-play-state:paused}
+@keyframes tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.ti{display:inline-flex;gap:6px;align-items:baseline;padding:0 16px;font-size:13px;color:var(--muted);border-right:1px solid var(--line)}
+.ti b{color:var(--text);font-weight:600}
+.ti .lc{font-size:12px}
+@media (prefers-reduced-motion:reduce){.tape-in{animation:none}.tape{overflow-x:auto}}
+.countbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px;margin-bottom:8px}
+.tvbox{height:min(70vh,560px);min-height:380px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.chartbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}
+.chartbar .tfs{margin:0}
+.seg.kind{margin-left:auto}
+.seg.kind button{min-height:36px;padding:6px 10px;font-size:13.5px}
+.symbox{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+a.copy{color:var(--accent);display:inline-block}
+.rating{margin:-4px 0 8px}
+@media (max-width:640px){
+  .chartbar .tfs{width:100%}
+  .seg.kind{margin-left:0;width:100%}
+  .seg.kind button{flex:1}
+  .tvbox{height:62vh;min-height:340px}
+}

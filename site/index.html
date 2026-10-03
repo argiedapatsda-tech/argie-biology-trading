@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Argie Biology Trading</title>
-<meta name="description" content="Rule-based signals, candle patterns and study notes for every instrument on XTB.">
+<meta name="description" content="Rule-based signals, candle patterns and study notes for every instrument on XTB and Thai SET, with live prices.">
 <meta name="theme-color" content="#0b0f14">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0f14'/%3E%3Cpath d='M9 7v18M9 11h0' stroke='%23f0555a' stroke-width='2'/%3E%3Crect x='7' y='12' width='4' height='8' fill='%23f0555a'/%3E%3Cpath d='M16 5v20' stroke='%232ec27e' stroke-width='2'/%3E%3Crect x='14' y='8' width='4' height='10' fill='%232ec27e'/%3E%3Cpath d='M23 4v18' stroke='%232ec27e' stroke-width='2'/%3E%3Crect x='21' y='6' width='4' height='9' fill='%232ec27e'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -16,7 +16,7 @@
   <p class="tag">Signals, candle patterns and "what next" study notes for every instrument, explained in plain words. Pick the platform you use:</p>
   <div class="choices">
     <button class="choice" data-mode="xtb"><h2>XTB</h2><p>Every stock, ETF, forex pair, commodity, index and crypto on XTB, with XTB symbol names.</p></button>
-    <button class="choice" data-mode="tv" disabled><h2>TradingView</h2><p>Global markets including Thai SET stocks, with TradingView charts.</p><span class="soon">Coming next</span></button>
+    <button class="choice" data-mode="tv"><h2>TradingView</h2><p>The same signals plus about 900 Thai SET stocks, with TradingView symbols, live TradingView charts and watchlist export.</p></button>
   </div>
   <label class="remember"><input type="checkbox" id="remember" checked> Remember my choice</label>
   <p class="disclaimer">For learning and research. Every list is made by fixed, visible rules from past prices - not advice to buy or sell, and past results do not guarantee future ones. Most retail CFD accounts lose money.</p>
@@ -25,15 +25,17 @@
 <div id="app" class="hidden">
   <header class="top">
     <div class="bar">
-      <div class="brand">Argie Biology Trading<small>XTB mode</small></div>
+      <div class="brand">Argie Biology Trading<small id="modeName">XTB mode</small></div>
       <div class="spacer"></div>
+      <span class="pill live" id="livePill" title="Prices refresh by themselves every 15 seconds"><i></i><span>Live</span></span>
       <span class="pill faint" id="updated">Loading…</span>
       <button class="pill" id="modeSwitch" title="Switch between XTB and TradingView">Switch</button>
     </div>
     <nav class="tabs" id="tabs" aria-label="Sections"></nav>
+    <div class="tape" id="tape" aria-label="Live market prices"><div class="tape-in" id="tapeIn"></div></div>
   </header>
   <main id="view"></main>
-  <footer class="foot">Data: Yahoo Finance (stocks may be ~15 min delayed) · Instrument list: XTB International specification tables · Fast-watch list refreshed every 30 min; every other instrument about twice a day.<br>
+  <footer class="foot">Signals: Yahoo Finance candles, rescanned about every 15 minutes (fast-watch list) and every few hours (everything else). Live prices: TradingView (crypto and forex in real time, most stock markets 15 min delayed). XTB's own CFD prices can differ slightly. Instrument list: XTB International specification tables + SET.<br>
     For learning and research only - not financial advice. Rules are mechanical and every score shows its reasons. Past results do not guarantee future results.</footer>
 </div>
 

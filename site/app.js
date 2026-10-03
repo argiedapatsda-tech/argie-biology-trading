@@ -29,7 +29,7 @@
   const TF_ORDER = ['15m', '1h', '4h', '1d', '1wk'];
 
   // ---------------------------------------------------------------- state
-  const S = { summary: null, patterns: {}, tab: 'cfd', side: 'buy', ctf: '1d', shown: 50, filt: { q: '', m: '', ty: '', lq: '0' }, chart: null, detailCache: {} };
+  const S = { mode: 'xtb', tv: {}, summary: null, patterns: {}, tab: 'cfd', side: 'buy', ctf: '1d', shown: 50, filt: { q: '', m: '', ty: '', lq: '0' }, chart: null, detailCache: {} };
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const store = {
@@ -48,13 +48,20 @@
   const isStockLike = r => r.ty === 'Stocks' || r.ty === 'ETFs';
   const inv = r => (r.d && r.d.inv) ? r.d.inv.score : null;
   function tfData(r, tf) { return tf === '1d' ? r.d : tf === '1wk' ? r.w : (r.i && r.i[tf]); }
+  const isTV = () => S.mode === 'tv';
+  const tvSym = x => S.tv[x] || '';
+  const tvLive = x => { const t = tvSym(x); return t.includes(':') ? t : ''; };  // has a live price feed
+  const shownSym = r => isTV() ? (tvSym(r.x) || r.x) : r.x;
+  const tvLink = x => 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSym(x) || x);
+  const inMode = r => isTV() || !r.tvo;   // Thai SET stocks only exist in TradingView mode
+  const tradable = r => isTV() || r.cfd;  // XTB lists are about CFDs; TradingView lists use everything
 
   // ---------------------------------------------------------------- tabs
   const TABS = {
     cfd: {
-      label: 'Strong CFD setups', short: 'CFD setups',
-      intro: () => `Instruments where several signals line up right now. <b>Buy side</b> = upward setups, <b>Sell side</b> = downward setups (with CFDs you can profit from a fall). Score 0–100; only scores of 70+ are listed. Daily and Weekly cover everything; 4H / 1H only cover the ${S.summary ? S.summary.fast.length : ''} instruments in the fast-watch list.`,
-      filter: r => { const t = tfData(r, S.ctf); return r.cfd && t && (S.side === 'buy' ? t.b >= 70 : t.s >= 70); },
+      label: 'Strong setups', short: 'Setups',
+      intro: () => `Instruments where several signals line up right now. <b>Buy side</b> = upward setups, <b>Sell side</b> = downward setups (${isTV() ? 'a fall can only be traded with CFDs or short selling' : 'with CFDs you can profit from a fall'}). Score 0–100; only scores of 70+ are listed. Daily and Weekly cover everything; 4H / 1H only cover the ${S.summary ? S.summary.fast.length : ''} instruments in the fast-watch list.`,
+      filter: r => { const t = tfData(r, S.ctf); return tradable(r) && t && (S.side === 'buy' ? t.b >= 70 : t.s >= 70); },
       sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || ((b.d.lq || 0) - (a.d.lq || 0)); },
     },
     inv_strong: {
@@ -71,13 +78,13 @@
     },
     avoid: {
       label: 'Avoid for now', short: 'Avoid',
-      intro: () => 'CFD instruments with <b>no clear direction</b> on the Daily chart: both the buy and the sell score are under 40. Signals conflict here, so trades are more of a coin flip. Usually better to wait.',
-      filter: r => r.cfd && r.d.b != null && r.d.b < 40 && r.d.s < 40,
+      intro: () => (isTV() ? 'Instruments' : 'CFD instruments') + ' with <b>no clear direction</b> on the Daily chart: both the buy and the sell score are under 40. Signals conflict here, so trades are more of a coin flip. Usually better to wait.',
+      filter: r => tradable(r) && r.d.b != null && r.d.b < 40 && r.d.s < 40,
       sort: (a, b) => (b.d.lq || 0) - (a.d.lq || 0),
     },
     all: {
       label: 'Search all', short: 'All',
-      intro: () => 'Every instrument we scan. Type a name or XTB symbol.',
+      intro: () => `Every instrument we scan. Type a name or ${isTV() ? 'TradingView' : 'XTB'} symbol.`,
       filter: () => true,
       sort: (a, b) => (b.d.lq || 0) - (a.d.lq || 0),
     },
@@ -86,10 +93,11 @@
   // ---------------------------------------------------------------- boot
   async function boot() {
     const choice = store.get('mode', null);
-    if (choice) showApp(); else $('#start').classList.remove('hidden');
+    if (choice) { S.mode = choice; showApp(); } else $('#start').classList.remove('hidden');
     document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
       if (b.disabled) return;
       if ($('#remember').checked) store.set('mode', b.dataset.mode);
+      S.mode = b.dataset.mode;
       showApp();
     }));
     window.addEventListener('hashchange', route);
@@ -98,18 +106,38 @@
   async function showApp() {
     $('#start').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#modeSwitch').onclick = () => { store.set('mode', null); location.hash = ''; location.reload(); };
+    $('#modeName').textContent = isTV() ? 'TradingView mode' : 'XTB mode';
     $('#view').innerHTML = '<div class="empty">Loading the latest data…</div>';
     try {
-      const [sum, pats] = await Promise.all([fetchJSON('data/summary.json'), fetchJSON('data/patterns.json').catch(() => ({}))]);
-      S.summary = sum; S.patterns = pats;
+      const [sum, pats, tv] = await Promise.all([fetchJSON('data/summary.json'), fetchJSON('data/patterns.json').catch(() => ({})), fetchJSON('tv.json').catch(() => ({}))]);
+      S.summary = sum; S.patterns = pats; S.tv = tv;
     } catch (e) {
       $('#view').innerHTML = `<div class="empty">Could not load the data (${esc(e.message)}).<br>If the site was just created, the first scan may still be running - try again in a few minutes.</div>`;
       return;
     }
-    $('#updated').textContent = (narrow() ? '' : 'Updated ') + ago(S.summary.generated);
+    showUpdated();
     if (narrow()) { $('#modeSwitch').textContent = '⇄'; $('#modeSwitch').setAttribute('aria-label', 'Switch platform'); }
-    $('#updated').title = `Full scan: ${S.summary.full_scan || '-'}\nFast scan: ${S.summary.fast_scan || '-'}`;
+    Live.start();
     route();
+    setInterval(showUpdated, 30000);
+    setInterval(refreshSummary, 5 * 60000);
+  }
+
+  function showUpdated() {
+    if (!S.summary) return;
+    $('#updated').textContent = (narrow() ? 'Scan ' : 'Scanned ') + ago(S.summary.generated);
+    $('#updated').title = `Signals last rescanned: ${new Date(S.summary.generated).toLocaleString()}\nFull scan: ${S.summary.full_scan || '-'}\nFast scan: ${S.summary.fast_scan || '-'}`;
+  }
+
+  // pick up a new scan without a page reload (only redraw lists, never yank an open chart away)
+  async function refreshSummary() {
+    if (document.hidden) return;
+    try {
+      const sum = await fetchJSON('data/summary.json?t=' + Date.now());
+      if (sum.generated === S.summary.generated) return;
+      S.summary = sum; showUpdated();
+      if ($('#rows')) renderRows();
+    } catch (e) { /* keep showing what we have */ }
   }
 
   async function fetchJSON(url) {
@@ -142,7 +170,7 @@
   function viewList() {
     navTabs(S.tab);
     const T = TABS[S.tab];
-    const rows = S.summary.rows;
+    const rows = S.summary.rows.filter(inMode);
     const markets = [...new Set(rows.map(r => r.m))].sort();
     const types = [...new Set(rows.map(r => r.ty))].sort();
     const f = S.filt;
@@ -153,7 +181,7 @@
       <p class="intro">${T.intro()}</p>
       <div class="filters">
         ${extra}
-        <input id="q" type="search" placeholder="Search name or XTB symbol…" value="${esc(f.q)}" aria-label="Search">
+        <input id="q" type="search" placeholder="Search name or ${isTV() ? 'TradingView' : 'XTB'} symbol…" value="${esc(f.q)}" aria-label="Search">
         <select id="fm" aria-label="Market"><option value="">All markets</option>${markets.map(m => `<option ${f.m === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
         <select id="fty" aria-label="Type"><option value="">All types</option>${types.map(m => `<option ${f.ty === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
         <select id="flq" aria-label="Minimum trading"><option value="0">Any trading volume</option>
@@ -161,34 +189,57 @@
           <option value="1e7" ${f.lq === '1e7' ? 'selected' : ''}>Trades > 10M per day</option>
           <option value="1e8" ${f.lq === '1e8' ? 'selected' : ''}>Trades > 100M per day</option></select>
       </div>
-      <div id="count" class="faint" style="font-size:13px;margin-bottom:8px"></div>
+      <div class="countbar"><span id="count" class="faint"></span><button class="copy" id="export" title="Download this list as a file you can import into a TradingView watchlist">⬇ TradingView watchlist</button></div>
       <div class="rows" id="rows"></div>`;
     const rerender = () => { S.shown = 50; renderRows(); };
     $('#q').oninput = e => { f.q = e.target.value; rerender(); };
     $('#fm').onchange = e => { f.m = e.target.value; rerender(); };
     $('#fty').onchange = e => { f.ty = e.target.value; rerender(); };
     $('#flq').onchange = e => { f.lq = e.target.value; rerender(); };
+    $('#export').onclick = exportWatchlist;
     document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { S.side = b.dataset.side; viewList(); });
     document.querySelectorAll('[data-ctf]').forEach(b => b.onclick = () => { S.ctf = b.dataset.ctf; viewList(); });
     renderRows();
   }
 
-  function renderRows() {
+  function currentList() {
     const T = TABS[S.tab], f = S.filt, q = f.q.trim().toLowerCase(), minLq = +f.lq;
-    let list = S.summary.rows.filter(r => {
+    const list = S.summary.rows.filter(r => {
+      if (!inMode(r)) return false;
       if (f.m && r.m !== f.m) return false;
       if (f.ty && r.ty !== f.ty) return false;
       if (minLq && r.d.lq != null && r.d.lq < minLq) return false;
-      if (q && !(r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q))) return false;
+      if (q && !(r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q) || tvSym(r.x).toLowerCase().includes(q))) return false;
       try { return T.filter(r); } catch (e) { return false; }
     });
     list.sort(T.sort);
+    return list;
+  }
+
+  function exportWatchlist() {
+    // TradingView's "Import list" reads comma-separated symbols; ###Name starts a section
+    const list = currentList().map(r => tvLive(r.x)).filter(Boolean).slice(0, 1000);
+    if (!list.length) return;
+    const T = TABS[S.tab];
+    const name = `Argie ${T.label}${S.tab === 'cfd' ? ` ${S.side} ${TF_LABEL[S.ctf]}` : ''}`;
+    const blob = new Blob([`###${name},` + list.join(',')], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase() + '.txt';
+    document.body.appendChild(a); a.click(); a.remove();
+    $('#export').textContent = `✓ ${list.length} symbols saved`;
+    setTimeout(() => { const b = $('#export'); if (b) b.textContent = '⬇ TradingView watchlist'; }, 4000);
+  }
+
+  function renderRows() {
+    if (!$('#rows')) return;
+    const list = currentList();
     $('#count').textContent = `${list.length.toLocaleString()} match${list.length === 1 ? '' : 'es'}`;
     if (!list.length) { $('#rows').innerHTML = '<div class="empty">Nothing matches right now. Try another timeframe, side or filter.</div>'; return; }
     $('#rows').innerHTML = list.slice(0, S.shown).map(rowHTML).join('') +
       (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
     $('#rows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${S.tab === 'cfd' ? S.ctf : '1d'}`; });
     const m = $('#more'); if (m) m.onclick = () => { S.shown += 50; renderRows(); };
+    Live.paint(); Live.poll();
   }
 
   function trendChip(tr) { return tr === 'up' ? '<span class="chip g">Uptrend</span>' : tr === 'down' ? '<span class="chip r">Downtrend</span>' : '<span class="chip">Sideways</span>'; }
@@ -205,8 +256,8 @@
   }
 
   function rowHTML(r) {
-    const d = r.d, price = r.live ? r.live.p : d.p;
-    let right = `<div class="px num">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}<div class="${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(d.ch, 2)}</div></div>`;
+    const d = r.d, price = r.live ? r.live.p : d.p, lt = tvLive(r.x);
+    let right = `<div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(d.ch, 2)}</div></div>`;
     let why = '';
     if (S.tab === 'cfd') {
       const t = tfData(r, S.ctf), sc = S.side === 'buy' ? t.b : t.s, col = S.side === 'buy' ? 'var(--up)' : 'var(--down)';
@@ -221,9 +272,9 @@
     } else {
       why = `<span class="chip ${d.b >= 70 ? 'g' : ''}">▲ ${d.b ?? '–'}</span><span class="chip ${d.s >= 70 ? 'r' : ''}">▼ ${d.s ?? '–'}</span>${trendChip(d.tr)}${d.inv ? `<span class="chip">Long-term ${d.inv.score}</span>` : ''}`;
     }
-    const tags = [r.cfd ? 'CFD' : '', r.real ? 'Real shares' : ''].filter(Boolean).join(' · ');
+    const tags = isTV() ? (r.tvo ? 'Thai SET (not on XTB)' : '') : [r.cfd ? 'CFD' : '', r.real ? 'Real shares' : ''].filter(Boolean).join(' · ');
     return `<button class="row" data-x="${esc(r.x)}">
-      <div class="name">${esc(r.n)}<span class="sym">${esc(r.x)}</span><div class="faint" style="font-size:12px;font-weight:400">${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${d.lq ? ' · trades ' + money(d.lq) + ' ' + esc(r.cur || '') + '/day' : ''}</div></div>
+      <div class="name">${esc(r.n)}<span class="sym">${esc(shownSym(r))}</span><div class="faint" style="font-size:12px;font-weight:400">${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${d.lq ? ' · trades ' + money(d.lq) + ' ' + esc(r.cur || '') + '/day' : ''}</div></div>
       ${right}<div class="why">${why}</div></button>`;
   }
   function decimalsOf(p) { return p >= 1000 ? 2 : p >= 10 ? 2 : p >= 1 ? 4 : 6; }
@@ -257,6 +308,8 @@
     const tfs = TF_ORDER.filter(k => det.tf[k]);
     if (!det.tf[tf]) tf = tfs.includes('1d') ? '1d' : tfs[0];
     const T = det.tf[tf], m = det.meta, d = decode(T), study = T.study;
+    const lt = tvLive(x), sym = isTV() ? (tvSym(x) || m.xtb) : m.xtb;
+    const kind = store.get('chartKind', isTV() ? 'tv' : 'ours');
     const price = d.c[d.c.length - 1], prev = d.c[d.c.length - 2], ch = (price / prev - 1) * 100;
     d.tf = tf;
     d.marks = T.marks.map(([i, pid]) => [i, pid, PAT[pid][1], PAT[pid][0]]);
@@ -267,14 +320,18 @@
       <div class="ihead">
         <div><h2>${esc(m.name)}</h2>
           <div class="faint" style="font-size:13px">${esc(m.type)} · ${esc(m.market)} · ${[m.cfd ? 'CFD' : '', m.real ? 'Real shares' : ''].filter(Boolean).join(' · ')}</div></div>
-        <div><span class="big num">${chartFmt(price, T.dp)}</span> <span class="${ch >= 0 ? 'up' : 'down'} num">${pct(ch, 2)}</span>
-          <div class="faint" style="font-size:12.5px">${T.closed ? 'Last candle closed' : 'Last candle still forming'} · ${tf === '1d' || tf === '1wk' ? 'prices may be ~15 min delayed' : 'intraday'}</div></div>
+        <div ${lt ? `data-live="${esc(lt)}"` : ''}><span class="big num lp">${chartFmt(price, T.dp)}</span> <span class="lc ${ch >= 0 ? 'up' : 'down'} num">${pct(ch, 2)}</span>
+          <div class="faint lnote" style="font-size:12.5px">${lt ? 'Waiting for live price…' : 'Price from the last scan (no live feed for this one)'}</div></div>
         <div class="spacer"></div>
-        <div><span class="faint" style="font-size:13px">XTB symbol</span> <b>${esc(m.xtb)}</b> <button class="copy" id="copy">Copy</button></div>
+        <div class="symbox"><span class="faint" style="font-size:13px">${isTV() ? 'TradingView' : 'XTB'} symbol</span> <b>${esc(sym)}</b> <button class="copy" id="copy">Copy</button>
+          <a class="copy" href="${tvLink(x)}" target="_blank" rel="noopener">Open in TradingView ↗</a></div>
       </div>
-      <div class="tfs">${TF_ORDER.map(k => `<button data-tf="${k}" class="${k === tf ? 'on' : ''}" ${det.tf[k] ? '' : 'disabled title="Only for the fast-watch list"'}>${tfShort(k)}</button>`).join('')}</div>
-      <div class="chartbox" id="chart"></div>
-      <div class="legend"><span><i style="background:#5aa9ff"></i>50 average</span><span><i style="background:#e5a83b"></i>200 average</span>
+      ${lt ? `<div class="rating" data-rec="${esc(lt)}"></div>` : ''}
+      <div class="chartbar"><div class="tfs">${TF_ORDER.map(k => `<button data-tf="${k}" class="${k === tf ? 'on' : ''}" ${det.tf[k] ? '' : 'disabled title="Only for the fast-watch list"'}>${tfShort(k)}</button>`).join('')}</div>
+        <div class="seg kind" role="group" aria-label="Chart type"><button data-kind="ours" class="${kind === 'ours' ? 'on' : ''}">Pattern chart</button><button data-kind="tv" class="${kind === 'tv' ? 'on' : ''}">Live TradingView chart</button></div></div>
+      <div class="chartbox ${kind === 'tv' ? 'hidden' : ''}" id="chart"></div>
+      <div class="tvbox ${kind === 'tv' ? '' : 'hidden'}" id="tvchart"></div>
+      <div class="legend ${kind === 'tv' ? 'hidden' : ''}" id="legend"><span><i style="background:#5aa9ff"></i>50 average</span><span><i style="background:#e5a83b"></i>200 average</span>
         <span><i style="background:rgba(46,194,126,.8)"></i>Support</span><span><i style="background:rgba(240,85,90,.8)"></i>Resistance</span>
         <span class="up">▲ bullish pattern</span><span class="down">▼ bearish pattern</span><span>Drag to move · scroll / pinch to zoom · tap a marked candle</span></div>
       <div id="picked"></div>
@@ -285,7 +342,16 @@
         ${T.inv || det.tf['1d']?.inv ? investCard(T.inv || det.tf['1d'].inv) : ''}
         ${patternStatsCard(T, tf)}
       </div>`;
-    $('#copy').onclick = () => { navigator.clipboard?.writeText(m.xtb).then(() => { $('#copy').textContent = 'Copied ✓'; }); };
+    $('#copy').onclick = () => { navigator.clipboard?.writeText(sym).then(() => { $('#copy').textContent = 'Copied ✓'; }); };
+    document.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => {
+      const k = b.dataset.kind; store.set('chartKind', k);
+      document.querySelectorAll('[data-kind]').forEach(o => o.classList.toggle('on', o === b));
+      $('#chart').classList.toggle('hidden', k === 'tv'); $('#legend').classList.toggle('hidden', k === 'tv');
+      $('#tvchart').classList.toggle('hidden', k !== 'tv');
+      if (k === 'tv') tvWidget($('#tvchart'), x, tf); else if (S.chart && S.chart.d) S.chart.setData(S.chart.d);  // re-fit the zoom now the box has a width
+    });
+    if (kind === 'tv') tvWidget($('#tvchart'), x, tf);
+    Live.paint(); Live.poll();
     document.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { if (!b.disabled) location.hash = `#/i/${encodeURIComponent(x)}/${b.dataset.tf}`; });
     S.chart = new CandleChart($('#chart'), { onMark: (i, ms) => showPicked(ms, T, tf) });
     S.chart.setData(d);
@@ -369,6 +435,121 @@
       <table style="width:100%;font-size:13.5px;border-collapse:collapse"><thead><tr class="faint"><td>Pattern</td><td>Here</td><td>All instruments</td></tr></thead><tbody>${rows}</tbody></table>
       <div class="note">% = how often price moved the pattern's way. Green = clearly better than normal (passes the luck test), red = worse than normal, grey = under 15 examples. Number of examples in brackets.</div></div>`;
   }
+
+  // ---------------------------------------------------------------- TradingView chart
+  const TV_INT = { '15m': '15', '1h': '60', '4h': '240', '1d': 'D', '1wk': 'W' };
+  function tvWidget(box, x, tf) {
+    // TradingView's free Advanced Chart widget: live candles, their own indicators and drawing tools
+    const key = x + '|' + tf;
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    box.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%"><div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div></div>';
+    const sc = document.createElement('script');
+    sc.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+    sc.async = true;
+    sc.textContent = JSON.stringify({
+      autosize: true, symbol: tvSym(x) || x, interval: TV_INT[tf] || 'D', timezone: 'Asia/Bangkok', theme: 'dark', style: '1',
+      locale: 'en', backgroundColor: '#10161d', gridColor: 'rgba(36,49,64,0.6)', allow_symbol_change: true,
+      hide_side_toolbar: narrow(), withdateranges: true, details: false, calendar: false,
+      studies: ['STD;RSI'], support_host: 'https://www.tradingview.com',
+    });
+    box.firstChild.appendChild(sc);
+  }
+
+  // ---------------------------------------------------------------- live prices
+  // TradingView's public screener answers browsers directly, so the page can refresh prices
+  // by itself between scans. If it ever stops answering, the page simply keeps the scan prices.
+  const Live = (() => {
+    const URL_SCAN = 'https://scanner.tradingview.com/global/scan';
+    const q = {};            // ticker -> {p, ch, mode, rec}
+    let busy = false, again = false, okAt = 0, failed = 0, timer = null;
+    const TAPE = [['US500', 'S&P 500'], ['US100', 'Nasdaq 100'], ['DE40', 'DAX'], ['JP225', 'Nikkei'], ['GOLD', 'Gold'],
+      ['OIL.WTI', 'Oil WTI'], ['EURUSD', 'EUR/USD'], ['USDJPY', 'USD/JPY'], ['BITCOIN', 'Bitcoin'], ['ETHEREUM', 'Ethereum']];
+    const tapeItems = () => {
+      const t = TAPE.map(([x, n]) => [tvLive(x), n, x]).filter(a => a[0]);
+      if (isTV()) t.splice(4, 0, ['SET:SET', 'SET index', ''], ['FX_IDC:USDTHB', 'USD/THB', '']);
+      return t;
+    };
+    const weekend = () => { const d = new Date().getUTCDay(), h = new Date().getUTCHours(); return d === 6 || (d === 0 && h < 21) || (d === 5 && h >= 22); };
+    const fmt = p => chartFmt(p, decimalsOf(p));
+
+    function renderTape() {
+      const items = tapeItems();
+      const one = items.map(([t, n, x]) => `<a class="ti" ${x ? `href="#/i/${encodeURIComponent(x)}/1d"` : `href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(t)}" target="_blank" rel="noopener"`} data-live="${esc(t)}"><b>${esc(n)}</b> <span class="lp num">…</span> <span class="lc num"></span></a>`).join('');
+      $('#tapeIn').innerHTML = one + one;  // twice, so the scroll loops seamlessly
+    }
+
+    function wanted() {
+      const s = new Set();
+      document.querySelectorAll('[data-live]').forEach(e => s.add(e.dataset.live));
+      return [...s];
+    }
+
+    async function poll() {
+      if (busy) { again = true; return; }  // new rows appeared mid-fetch: fetch again right after
+      if (document.hidden) return;
+      const tickers = wanted();
+      if (!tickers.length) return;
+      busy = true;
+      try {
+        for (let i = 0; i < tickers.length; i += 400) {
+          const res = await fetch(URL_SCAN, { method: 'POST', body: JSON.stringify({ symbols: { tickers: tickers.slice(i, i + 400) }, columns: ['close', 'change', 'update_mode', 'Recommend.All'] }) });
+          if (!res.ok) throw new Error(res.status);
+          const js = await res.json();
+          for (const r of js.data || []) q[r.s] = { p: r.d[0], ch: r.d[1], mode: r.d[2] || '', rec: r.d[3] };
+        }
+        okAt = Date.now(); failed = 0;
+      } catch (e) { failed++; }
+      busy = false;
+      paint();
+      if (again) { again = false; poll(); }
+    }
+
+    function recLabel(v) {
+      if (v == null) return null;
+      return v > 0.5 ? ['Strong buy', 'g'] : v > 0.1 ? ['Buy', 'g'] : v < -0.5 ? ['Strong sell', 'r'] : v < -0.1 ? ['Sell', 'r'] : ['Neutral', ''];
+    }
+
+    function paint() {
+      document.querySelectorAll('[data-live]').forEach(el => {
+        const c = q[el.dataset.live];
+        if (!c || c.p == null) return;
+        const lp = el.querySelector('.lp'), lc = el.querySelector('.lc'), txt = fmt(c.p);
+        if (lp && lp.textContent !== txt) {
+          const before = parseFloat(el.dataset.p);
+          lp.textContent = txt;
+          if (!isNaN(before) && before !== c.p) {
+            el.classList.remove('fl-up', 'fl-down'); void el.offsetWidth;
+            el.classList.add(c.p > before ? 'fl-up' : 'fl-down');
+          }
+        }
+        el.dataset.p = c.p;
+        if (lc && c.ch != null) { lc.textContent = pct(c.ch, 2); lc.classList.toggle('up', c.ch >= 0); lc.classList.toggle('down', c.ch < 0); }
+        const note = el.querySelector('.lnote');
+        if (note) note.textContent = 'Live price · ' + (c.mode.startsWith('delayed') ? `delayed ${Math.round((+c.mode.split('_').pop() || 900) / 60)} min` : 'real time') + (weekend() && !el.dataset.live.startsWith('BINANCE') && !el.dataset.live.startsWith('COINBASE') ? ' · market closed for the weekend' : '');
+      });
+      document.querySelectorAll('[data-rec]').forEach(el => {
+        const c = q[el.dataset.rec], l = c && recLabel(c.rec);
+        el.innerHTML = l ? `<span class="chip ${l[1]}" title="TradingView's own technical summary (moving averages + oscillators). A second opinion, separate from the scores on this page.">TradingView rating: ${l[0]}</span>` : '';
+      });
+      const pill = $('#livePill');
+      const fresh = Date.now() - okAt < 60000;
+      pill.classList.toggle('off', !fresh);
+      pill.querySelector('span').textContent = !fresh ? (failed ? 'Live off' : 'Live…') : weekend() ? (narrow() ? 'Weekend' : 'Live · weekend') : 'Live';
+      pill.title = !fresh ? 'Live prices are not reachable right now - showing prices from the last scan.'
+        : weekend() ? 'Live prices on. It is the weekend, so stock, index, commodity and forex markets are closed and their prices do not move. Crypto trades 24/7.'
+          : 'Live prices refresh by themselves every 15 seconds (crypto/forex real time, most stocks 15 min delayed).';
+    }
+
+    function start() {
+      renderTape();
+      poll();
+      clearInterval(timer);
+      timer = setInterval(poll, 15000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+    }
+    return { start, poll, paint };
+  })();
 
   // ---------------------------------------------------------------- library
   function patSVG(cs) {
