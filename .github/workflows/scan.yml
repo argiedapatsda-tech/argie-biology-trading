@@ -1,0 +1,79 @@
+name: scan
+
+# Every 30 minutes: refresh the fast-watch list (15m/1H/4H) and one slice of the
+# daily scan, then publish the website. Price history is kept between runs in the
+# Actions cache so each run only downloads the last few days from Yahoo.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      max:
+        description: "Instruments in this run's daily slice"
+        default: "400"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore saved data
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            site/data
+          key: data-${{ github.run_id }}
+          restore-keys: data-
+
+      - name: Refresh XTB instrument list (monthly)
+        continue-on-error: true
+        run: |
+          if [ ! -f state/universe.json ] || [ -n "$(find state/universe.json -mtime +30)" ]; then
+            python scripts/build_universe.py --download --to-state
+          fi
+
+      - name: Fast scan (15m / 1H / 4H)
+        continue-on-error: true
+        run: python run.py fast
+
+      - name: Daily scan slice
+        continue-on-error: true
+        run: python run.py full --max ${{ github.event.inputs.max || '400' }}
+
+      - name: Save data for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            site/data
+          key: data-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

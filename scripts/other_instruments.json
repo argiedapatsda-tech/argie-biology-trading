@@ -1,0 +1,34 @@
+{
+  "_help": "XTB name -> Yahoo symbol for non-stock instruments. Forex pairs are added automatically from XTB's table (PAIR=X).",
+  "Indices": {
+    "US100": ["^NDX", "Nasdaq 100"], "US500": ["^GSPC", "S&P 500"], "US30": ["^DJI", "Dow Jones 30"],
+    "US2000": ["^RUT", "Russell 2000"], "DE40": ["^GDAXI", "Germany 40 (DAX)"], "UK100": ["^FTSE", "UK 100 (FTSE)"],
+    "FRA40": ["^FCHI", "France 40 (CAC)"], "EU50": ["^STOXX50E", "Euro Stoxx 50"], "SPA35": ["^IBEX", "Spain 35 (IBEX)"],
+    "ITA40": ["FTSEMIB.MI", "Italy 40 (FTSE MIB)"], "NED25": ["^AEX", "Netherlands 25 (AEX)"], "SUI20": ["^SSMI", "Switzerland 20 (SMI)"],
+    "JP225": ["^N225", "Japan 225 (Nikkei)"], "VIX": ["^VIX", "VIX fear index"], "USDIDX": ["DX-Y.NYB", "US Dollar index"],
+    "W20": ["WIG20.WA", "Poland 20 (WIG20)"]
+  },
+  "Commodities": {
+    "GOLD": ["GC=F", "Gold"], "SILVER": ["SI=F", "Silver"], "PLATINUM": ["PL=F", "Platinum"], "PALLADIUM": ["PA=F", "Palladium"],
+    "COPPER": ["HG=F", "Copper"], "ALUMINIUM": ["ALI=F", "Aluminium"], "OIL": ["BZ=F", "Brent oil"], "OIL.WTI": ["CL=F", "WTI crude oil"],
+    "NATGAS": ["NG=F", "Natural gas"], "GASOLINE": ["RB=F", "Gasoline"], "COCOA": ["CC=F", "Cocoa"], "COFFEE": ["KC=F", "Coffee"],
+    "CORN": ["ZC=F", "Corn"], "SOYBEAN": ["ZS=F", "Soybeans"], "SUGAR": ["SB=F", "Sugar"], "WHEAT": ["ZW=F", "Wheat"],
+    "COTTON": ["CT=F", "Cotton"], "ORANGE": ["OJ=F", "Orange juice"], "TNOTE": ["ZN=F", "US 10-year T-Note"]
+  },
+  "Crypto": {
+    "BITCOIN": ["BTC-USD", "Bitcoin"], "ETHEREUM": ["ETH-USD", "Ethereum"], "SOLANA": ["SOL-USD", "Solana"],
+    "RIPPLE": ["XRP-USD", "XRP"], "CARDANO": ["ADA-USD", "Cardano"], "DOGECOIN": ["DOGE-USD", "Dogecoin"],
+    "LITECOIN": ["LTC-USD", "Litecoin"], "POLKADOT": ["DOT-USD", "Polkadot"], "CHAINLINK": ["LINK-USD", "Chainlink"],
+    "AVALANCHE": ["AVAX-USD", "Avalanche"], "BINANCECOIN": ["BNB-USD", "BNB"], "BITCOINCASH": ["BCH-USD", "Bitcoin Cash"],
+    "STELLAR": ["XLM-USD", "Stellar"], "TRON": ["TRX-USD", "Tron"], "AAVE": ["AAVE-USD", "Aave"],
+    "ALGORAND": ["ALGO-USD", "Algorand"], "COSMOS": ["ATOM-USD", "Cosmos"], "HEDERA": ["HBAR-USD", "Hedera"],
+    "NEAR": ["NEAR-USD", "NEAR"], "FILECOIN": ["FIL-USD", "Filecoin"], "SHIBA": ["SHIB-USD", "Shiba Inu"],
+    "TEZOS": ["XTZ-USD", "Tezos"], "VECHAIN": ["VET-USD", "VeChain"], "ZCASH": ["ZEC-USD", "Zcash"],
+    "SANDBOX": ["SAND-USD", "The Sandbox"], "DECENTRALAND": ["MANA-USD", "Decentraland"], "CHILIZ": ["CHZ-USD", "Chiliz"],
+    "COMPOUND": ["COMP-USD", "Compound"], "SUSHI": ["SUSHI-USD", "SushiSwap"], "DYDX": ["DYDX-USD", "dYdX"],
+    "INJECTIVE": ["INJ-USD", "Injective"], "KUSAMA": ["KSM-USD", "Kusama"], "UNISWAP": ["UNI-USD", "Uniswap"],
+    "SUI": ["SUI-USD", "Sui"], "TONCOIN": ["TON-USD", "Toncoin"], "PEPE": ["PEPE-USD", "Pepe"],
+    "APECOIN": ["APE-USD", "ApeCoin"], "ARBITRUM": ["ARB-USD", "Arbitrum"], "RENDER": ["RENDER-USD", "Render"],
+    "GALA": ["GALA-USD", "Gala"], "ONDO": ["ONDO-USD", "Ondo"], "BONK": ["BONK-USD", "Bonk"]
+  }
+}
