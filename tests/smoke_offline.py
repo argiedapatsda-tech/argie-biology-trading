@@ -81,6 +81,18 @@ def main():
         assert all(H[i] >= max(O[i], C[i]) and L[i] <= min(O[i], C[i]) for i in range(len(C)))
         assert all(0 <= m[0] < len(C) for m in d["marks"])
         assert d["study"]["scenarios"][0]["status"] in ("waiting", "confirmed", "cancelled", "failed")
+        # alerts: force a fresh crossing and check it is found, formatted and not repeated
+        from engine import alerts
+        g = json.loads(json.dumps(rows["GOLD"]))
+        g["d"].update({"b": 76, "bp": 61})
+        ev = alerts.find_events([g], "1d", {})
+        assert any(e["kind"] == "setup" and e["side"] == "buy" for e in ev), ev
+        msg = alerts.format_event(ev[0])
+        assert "Gold" in msg and "76" in msg, msg
+        first = alerts.process([g], "1d", run.STATE, run.SITE_DATA, {})
+        again = alerts.process([g], "1d", run.STATE, run.SITE_DATA, {})
+        assert first and not again, (len(first), len(again))
+        print("alert message example:\n" + msg)
         size = sum(os.path.getsize(os.path.join(run.DETAIL, f)) for f in os.listdir(run.DETAIL))
         print(f"detail files: {len(os.listdir(run.DETAIL))}, avg {size / len(os.listdir(run.DETAIL)) / 1024:.0f} KB")
         print("summary row example:", json.dumps(rows["AAA.US"])[:400])

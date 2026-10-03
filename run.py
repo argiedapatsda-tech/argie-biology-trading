@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from engine import store
+from engine import alerts, store
 from engine.analyze import analyze, pool_outcomes
 from engine.data import fix_forex_daily, is_forex, resample
 
@@ -222,6 +222,9 @@ def run_full(limit=None, max_n=None):
         old[r["x"]] = r
     all_rows = [r for x, r in old.items() if x in valid]
 
+    alerts.process(rows, "1d", STATE, SITE_DATA, merged_pooled, log=log)
+    alerts.morning_digest(all_rows, STATE, log=log)
+
     fast = choose_fast(all_rows)
     write_json(os.path.join(STATE, "fast.json"), fast)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -260,6 +263,7 @@ def run_fast():
     m15 = store.update(STATE, "15m", tickers, log=log)
     pooled = read_json(os.path.join(STATE, "pooled.json"), {})
     collected = {"15m": [], "1h": [], "4h": []}
+    touched = []
 
     for f in fast:
         y, x = f["yahoo"], f["xtb"]
@@ -290,6 +294,7 @@ def run_fast():
         row = by_x.get(x)
         if row is not None:
             row["i"] = intr
+            touched.append(row)
             # the latest 15m close is the freshest price we have
             last = intr.get("15m") or intr.get("1h")
             if last and last.get("p") is not None:
@@ -297,6 +302,7 @@ def run_fast():
 
     new_pooled = {tf: pool_outcomes(v) for tf, v in collected.items() if len(v) >= 20}
     pooled.update(new_pooled)
+    alerts.process(touched, "4h", STATE, SITE_DATA, pooled, log=log)
     write_json(os.path.join(STATE, "pooled.json"), pooled)
     write_json(os.path.join(SITE_DATA, "patterns.json"), pooled)
     summary["generated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
