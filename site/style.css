@@ -162,6 +162,6 @@ a.copy{color:var(--accent);display:inline-block}
   .tvbox{height:62vh;min-height:340px}
 }
 
-/* no visible scrollbar (wheel, trackpad, keys and touch still scroll) */
-html{scrollbar-width:none;-ms-overflow-style:none}
-html::-webkit-scrollbar,body::-webkit-scrollbar{display:none;width:0;height:0}
+/* no visible scrollbars anywhere (wheel, trackpad, keys and touch still scroll) */
+*{scrollbar-width:none;-ms-overflow-style:none}
+*::-webkit-scrollbar{display:none;width:0;height:0}
