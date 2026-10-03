@@ -98,6 +98,7 @@
   async function showApp() {
     $('#start').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#modeSwitch').onclick = () => { store.set('mode', null); location.hash = ''; location.reload(); };
+    $('#view').innerHTML = '<div class="empty">Loading the latest data…</div>';
     try {
       const [sum, pats] = await Promise.all([fetchJSON('data/summary.json'), fetchJSON('data/patterns.json').catch(() => ({}))]);
       S.summary = sum; S.patterns = pats;
@@ -307,6 +308,9 @@
   }
 
   function studyCard(st, T) {
+    // fall back to the latest all-instrument stats if this file was built before they existed
+    const poolNow = S.patterns[T.tf] || {};
+    st.recent_patterns.forEach(p => { if ((!p.pool || !p.pool.n) && poolNow[p.id]) p.pool = poolNow[p.id]; });
     const leanCls = st.lean >= 1.5 ? 'up' : st.lean <= -1.5 ? 'down' : 'warn';
     const pats = st.recent_patterns.length ? st.recent_patterns.map(p => `<div class="pat"><b class="${p.dir === 'bull' ? 'up' : p.dir === 'bear' ? 'down' : ''}">${p.dir === 'bull' ? '▲' : p.dir === 'bear' ? '▼' : '•'} ${esc(p.name)}</b> <span class="faint">${p.ago === 0 ? 'on the last closed candle' : p.ago + ' candle' + (p.ago > 1 ? 's' : '') + ' ago'}</span>
         <div>${esc(p.meaning)}</div><div class="stat">${statLine(p.local, p.dir, 'On this instrument')}</div><div class="stat">${statLine(p.pool, p.dir, 'Across all instruments')}</div></div>`).join('')
@@ -357,12 +361,13 @@
     if (!ids.length) return '';
     const rows = ids.map(id => {
       const [name, dir] = PAT[id], l = T.pstats[id] || {}, p = pool[id] || {};
-      const cell = st => !st.n ? '<span class="faint">–</span>' : dir === 'neutral' ? `${st.up}% up <span class="faint">(${st.n})</span>` : `<b class="${st.win >= st.base_win + 5 ? 'up' : st.win < st.base_win ? 'down' : ''}">${st.win}%</b> <span class="faint">(${st.n.toLocaleString()})</span>`;
+      const cell = st => !st.n ? '<span class="faint">–</span>' : dir === 'neutral' ? `${st.up}% up <span class="faint">(${st.n})</span>`
+        : `<b class="${st.n < 15 ? 'faint' : st.grade === 'Historically reliable' ? 'up' : st.win < st.base_win ? 'down' : ''}">${st.win}%</b> <span class="faint">(${st.n.toLocaleString()})</span>`;
       return `<tr><td class="${dir === 'bull' ? 'up' : dir === 'bear' ? 'down' : ''}">${dir === 'bull' ? '▲' : dir === 'bear' ? '▼' : '•'} ${esc(name)}</td><td>${cell(l)}</td><td>${cell(p)}</td></tr>`;
     }).join('');
     return `<div class="card"><h3>How patterns worked <small>${TF_LABEL[tf]}, next 5 candles</small></h3>
       <table style="width:100%;font-size:13.5px;border-collapse:collapse"><thead><tr class="faint"><td>Pattern</td><td>Here</td><td>All instruments</td></tr></thead><tbody>${rows}</tbody></table>
-      <div class="note">% = how often price moved the pattern's way. Green = clearly better than normal, red = worse than normal. Number of examples in brackets.</div></div>`;
+      <div class="note">% = how often price moved the pattern's way. Green = clearly better than normal (passes the luck test), red = worse than normal, grey = under 15 examples. Number of examples in brackets.</div></div>`;
   }
 
   // ---------------------------------------------------------------- library
