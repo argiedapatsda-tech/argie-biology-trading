@@ -89597,7 +89597,7 @@
 },
 {
 "xtb": "COMPOUND",
-"yahoo": "COMP-USD",
+"yahoo": "COMP5692-USD",
 "name": "Compound",
 "type": "Crypto",
 "market": "Global",
@@ -89647,7 +89647,7 @@
 },
 {
 "xtb": "UNISWAP",
-"yahoo": "UNI-USD",
+"yahoo": "UNI7083-USD",
 "name": "Uniswap",
 "type": "Crypto",
 "market": "Global",
@@ -89657,7 +89657,7 @@
 },
 {
 "xtb": "SUI",
-"yahoo": "SUI-USD",
+"yahoo": "SUI20947-USD",
 "name": "Sui",
 "type": "Crypto",
 "market": "Global",
@@ -89667,7 +89667,7 @@
 },
 {
 "xtb": "TONCOIN",
-"yahoo": "TON-USD",
+"yahoo": "TON11419-USD",
 "name": "Toncoin",
 "type": "Crypto",
 "market": "Global",
@@ -89677,7 +89677,7 @@
 },
 {
 "xtb": "PEPE",
-"yahoo": "PEPE-USD",
+"yahoo": "PEPE24478-USD",
 "name": "Pepe",
 "type": "Crypto",
 "market": "Global",
@@ -89687,7 +89687,7 @@
 },
 {
 "xtb": "APECOIN",
-"yahoo": "APE-USD",
+"yahoo": "APE18876-USD",
 "name": "ApeCoin",
 "type": "Crypto",
 "market": "Global",
@@ -89697,7 +89697,7 @@
 },
 {
 "xtb": "ARBITRUM",
-"yahoo": "ARB-USD",
+"yahoo": "ARB11841-USD",
 "name": "Arbitrum",
 "type": "Crypto",
 "market": "Global",
