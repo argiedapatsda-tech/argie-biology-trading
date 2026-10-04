@@ -29,7 +29,7 @@
   const TF_ORDER = ['15m', '1h', '4h', '1d', '1wk'];
 
   // ---------------------------------------------------------------- state
-  const S = { mode: 'xtb', tv: {}, summary: null, patterns: {}, tab: 'cfd', side: 'buy', ctf: '1d', shown: 50, filt: { q: '', m: '', ty: '', lq: '0' }, chart: null, detailCache: {} };
+  const S = { mode: 'xtb', tv: {}, summary: null, patterns: {}, tab: 'cfd', side: 'buy', ctf: '1d', shown: 50, filt: { q: '', m: '', ty: '', lq: '0' }, chart: null, detailCache: {}, back: '#/now' };
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const store = {
@@ -55,6 +55,9 @@
   const tvLink = x => 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSym(x) || x);
   const inMode = r => isTV() || !r.tvo;   // Thai SET stocks only exist in TradingView mode
   const tradable = r => isTV() || r.cfd;  // XTB lists are about CFDs; TradingView lists use everything
+  // Forex, indices and commodities close from Friday 22:00 to Sunday 21:00 UTC; crypto never closes
+  const weekend = () => { const n = new Date(), d = n.getUTCDay(), h = n.getUTCHours(); return d === 6 || (d === 0 && h < 21) || (d === 5 && h >= 22); };
+  const isOpen = r => r.ty === 'Crypto' || !weekend();
 
   // ---------------------------------------------------------------- tabs
   const TABS = {
@@ -136,7 +139,7 @@
       const sum = await fetchJSON('data/summary.json?t=' + Date.now());
       if (sum.generated === S.summary.generated) return;
       S.summary = sum; showUpdated();
-      if ($('#rows')) renderRows();
+      if ($('#board')) renderBoard(); else if ($('#rows')) renderRows();
     } catch (e) { /* keep showing what we have */ }
   }
 
@@ -154,16 +157,127 @@
     if (h[0] === 'i' && h[1]) return viewInstrument(h[1], h[2] || '1d');
     if (h[0] === 'library') return viewLibrary(h[1] || '1d');
     if (h[0] === 'practice') return viewPractice();
-    if (h[0] === 'list' && TABS[h[1]]) S.tab = h[1];
-    viewList();
+    if (h[0] === 'list' && TABS[h[1]]) { S.tab = h[1]; S.back = '#/list/' + h[1]; return viewList(); }
+    S.back = '#/now';
+    viewBoard();
   }
 
   function navTabs(active) {
-    const items = Object.entries(TABS).map(([k, t]) => `<button class="tab ${active === k ? 'on' : ''}" data-go="#/list/${k}">${t.label}</button>`);
+    const items = [`<button class="tab ${active === 'now' ? 'on' : ''}" data-go="#/now">CFDs now</button>`].concat(Object.entries(TABS).map(([k, t]) => `<button class="tab ${active === k ? 'on' : ''}" data-go="#/list/${k}">${t.label}</button>`));
     items.push(`<button class="tab ${active === 'library' ? 'on' : ''}" data-go="#/library">Pattern library</button>`);
     items.push(`<button class="tab ${active === 'practice' ? 'on' : ''}" data-go="#/practice">Practice</button>`);
     $('#tabs').innerHTML = items.join('');
     $('#tabs').querySelectorAll('[data-go]').forEach(b => b.onclick = () => { location.hash = b.dataset.go; });
+  }
+
+  // ---------------------------------------------------------------- CFDs now board
+  // Every non-stock CFD (crypto, forex, indices, commodities) in one place, each with a plain verdict
+  // for the chosen timeframe - including the ones that are NOT worth trading right now.
+  const BCATS = [['all', 'All'], ['Crypto', 'Crypto'], ['Forex', 'Forex'], ['Indices', 'Indices'], ['Commodities', 'Commodities'], ['stocks', 'Popular stock CFDs']];
+  const BTFS = ['15m', '1h', '4h', '1d'];
+  const HIGHER = { '15m': '1h', '1h': '4h', '4h': '1d', '1d': '1wk' };
+
+  function verdict(t) {
+    if (!t || t.b == null || t.s == null) return 'none';
+    if (t.b >= 70 && t.s < 40) return 'buy';
+    if (t.s >= 70 && t.b < 40) return 'sell';
+    if (t.b >= 55 && t.b - t.s >= 20) return 'lbuy';
+    if (t.s >= 55 && t.s - t.b >= 20) return 'lsell';
+    return 'wait';
+  }
+  const dirOf = v => v === 'buy' || v === 'lbuy' ? 'up' : v === 'sell' || v === 'lsell' ? 'down' : '';
+
+  function boardPool(cat) {
+    const fast = new Set(S.summary.fast || []);
+    return S.summary.rows.filter(r => {
+      if (!inMode(r)) return false;
+      if (cat === 'stocks') return isStockLike(r) && fast.has(r.x) && tradable(r);
+      return !isStockLike(r) && (cat === 'all' || r.ty === cat);
+    });
+  }
+
+  function viewBoard() {
+    navTabs('now');
+    S.bcat = S.bcat || store.get('bcat', 'all');
+    S.btf = S.btf || store.get('btf', '1h');
+    S.showWait = false;
+    const closed = weekend();
+    $('#view').innerHTML = `
+      <p class="intro">Every CFD market in one list with a plain answer: <b class="up">set up now</b>, <b class="warn">getting close</b> or <b>not now</b>.
+        Pick how long you plan to hold a trade: 15m / 1H for hours, 4H for a day or two, Daily for days to weeks.
+        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Forex, indices and commodities show where they closed on Friday and reopen Sunday night (UTC).</span>' : ''}</p>
+      <div class="filters">
+        <div class="seg wrap" role="group" aria-label="Market">${BCATS.map(([k, l]) => `<button data-bcat="${k}" class="${S.bcat === k ? 'on' : ''}">${l} <span class="cnt">${boardPool(k).length}</span></button>`).join('')}</div>
+        <div class="seg" role="group" aria-label="Timeframe">${BTFS.map(tf => `<button data-btf="${tf}" class="${S.btf === tf ? 'on' : ''}">${TF_LABEL[tf]}</button>`).join('')}</div>
+        <input id="bq" type="search" placeholder="Search…" aria-label="Search" value="${esc(S.bq || '')}">
+      </div>
+      <div id="board"></div>`;
+    document.querySelectorAll('[data-bcat]').forEach(b => b.onclick = () => { S.bcat = b.dataset.bcat; store.set('bcat', S.bcat); viewBoard(); });
+    document.querySelectorAll('[data-btf]').forEach(b => b.onclick = () => { S.btf = b.dataset.btf; store.set('btf', S.btf); viewBoard(); });
+    $('#bq').oninput = e => { S.bq = e.target.value; renderBoard(); };
+    renderBoard();
+  }
+
+  function renderBoard() {
+    const box = $('#board'); if (!box) return;
+    const tf = S.btf, q = (S.bq || '').trim().toLowerCase();
+    const groups = { go: [], lean: [], wait: [], none: [] };
+    for (const r of boardPool(S.bcat)) {
+      if (q && !(r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q) || tvSym(r.x).toLowerCase().includes(q))) continue;
+      const t = tfData(r, tf), v = verdict(t);
+      const g = v === 'buy' || v === 'sell' ? 'go' : v === 'lbuy' || v === 'lsell' ? 'lean' : v;
+      groups[g].push({ r, t, v, str: t && t.b != null ? Math.max(t.b, t.s) : 0, agree: dirOf(verdict(tfData(r, HIGHER[tf]))) === dirOf(v) ? 1 : 0 });
+    }
+    // open markets first, then the bigger chart agreeing, then the strongest score
+    const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.agree - a.agree) || (b.str - a.str) || ((b.r.d.lq || 0) - (a.r.d.lq || 0));
+    Object.values(groups).forEach(g => g.sort(order));
+    const SEC = {
+      go: ['✅ Set up now', 'up', 'Most signals point the same way on the ' + TF_LABEL[tf] + ' chart (score 70+ on one side, under 40 on the other).'],
+      lean: ['👀 Getting close', 'warn', 'Leaning one way but not strong yet. Worth watching, not rushing.'],
+      wait: ['⏸ Not now', '', 'No clear direction: buy and sell signals are mixed or weak. Trades here are close to a coin flip, so most traders wait.'],
+      none: ['No ' + TF_LABEL[tf] + ' data yet', 'faint', 'Not scanned on this timeframe yet (or too new to have a score).'],
+    };
+    const html = Object.entries(groups).filter(([k, g]) => g.length).map(([k, g]) => {
+      const [title, cls, sub] = SEC[k];
+      const capped = k === 'wait' && !S.showWait ? g.slice(0, 12) : g;
+      return `<section class="bsec"><h3 class="${cls}">${title} <span class="cnt">${g.length}</span></h3><p class="faint bsub">${sub}</p>
+        <div class="rows">${capped.map(boardRow).join('')}</div>
+        ${capped.length < g.length ? `<button class="more" id="moreWait">Show all ${g.length} "not now"</button>` : ''}</section>`;
+    }).join('');
+    box.innerHTML = html || '<div class="empty">Nothing matches.</div>';
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${tf}`; });
+    const mw = $('#moreWait'); if (mw) mw.onclick = () => { S.showWait = true; renderBoard(); };
+    Live.paint(); Live.poll();
+  }
+
+  function boardRow({ r, t, v }) {
+    const tf = S.btf, d = r.d, price = r.live ? r.live.p : d.p, lt = tvLive(r.x);
+    const side = dirOf(v) === 'down' ? 'sell' : 'buy';
+    const LBL = { buy: '▲ BUY setup', sell: '▼ SELL setup', lbuy: '↗ Leaning buy', lsell: '↘ Leaning sell', wait: '⏸ Not now', none: 'No data' };
+    const vcls = { buy: 'g', sell: 'r', lbuy: 'g soft', lsell: 'r soft', wait: '', none: '' }[v];
+    const chips = [];
+    if (t && t.b != null) chips.push(`<span class="chip">▲ ${t.b} · ▼ ${t.s}</span>`);
+    if (dirOf(v)) {
+      const hv = verdict(tfData(r, HIGHER[tf])), hl = TF_LABEL[HIGHER[tf]];
+      if (dirOf(hv) === dirOf(v)) chips.push(`<span class="chip g">${hl} chart agrees</span>`);
+      else if (dirOf(hv)) chips.push(`<span class="chip y">${hl} chart points the other way</span>`);
+      if (side === 'buy' && t.r > 72) chips.push(`<span class="chip y">RSI ${Math.round(t.r)}: stretched, late to buy</span>`);
+      if (side === 'sell' && t.r < 28) chips.push(`<span class="chip y">RSI ${Math.round(t.r)}: stretched, late to sell</span>`);
+      chips.push(pastChip(t.bt, side));
+    }
+    if (t && t.tr) chips.push(trendChip(t.tr));
+    chips.push(patChips(t && t.pat));
+    if (!isOpen(r)) chips.push('<span class="chip y">Market closed (weekend)</span>');
+    // the same verdict on every timeframe, so you can see at a glance whether they line up
+    const ladder = BTFS.map(k => {
+      const kv = dirOf(verdict(tfData(r, k)));
+      return `<span class="tfdot ${kv} ${k === tf ? 'cur' : ''}" title="${TF_LABEL[k]}: ${kv === 'up' ? 'leaning up' : kv === 'down' ? 'leaning down' : 'no clear direction'}">${tfShort(k)} ${kv === 'up' ? '▲' : kv === 'down' ? '▼' : '–'}</span>`;
+    }).join('');
+    return `<button class="row brow b-${dirOf(v) || 'flat'}" data-x="${esc(r.x)}">
+      <div class="name"><span class="verdict ${vcls}">${LBL[v]}</span> ${esc(r.n)}<span class="sym">${esc(shownSym(r))}</span>
+        <div class="ladder">${ladder}<span class="faint" style="font-size:12px">${esc(r.ty)}</span></div></div>
+      <div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(d.ch, 2)}</div></div>
+      <div class="why">${chips.join('')}</div></button>`;
   }
 
   // ---------------------------------------------------------------- list view
@@ -177,13 +291,14 @@
     const extra = S.tab === 'cfd' ? `
       <div class="seg" role="group" aria-label="Side"><button data-side="buy" class="${S.side === 'buy' ? 'on' : ''}">▲ Buy side</button><button data-side="sell" class="${S.side === 'sell' ? 'on' : ''}">▼ Sell side</button></div>
       <div class="seg" role="group" aria-label="Timeframe">${['1h', '4h', '1d', '1wk'].map(tf => `<button data-ctf="${tf}" class="${S.ctf === tf ? 'on' : ''}">${TF_LABEL[tf]}</button>`).join('')}</div>` : '';
+    const tyChips = `<div class="seg wrap" role="group" aria-label="Type"><button data-ty="" class="${f.ty ? '' : 'on'}">All types</button>${types.map(t => `<button data-ty="${esc(t)}" class="${f.ty === t ? 'on' : ''}">${esc(t)}</button>`).join('')}</div>`;
     $('#view').innerHTML = `
       <p class="intro">${T.intro()}</p>
+      <div class="filters">${tyChips}</div>
       <div class="filters">
         ${extra}
         <input id="q" type="search" placeholder="Search name or ${isTV() ? 'TradingView' : 'XTB'} symbol…" value="${esc(f.q)}" aria-label="Search">
         <select id="fm" aria-label="Market"><option value="">All markets</option>${markets.map(m => `<option ${f.m === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
-        <select id="fty" aria-label="Type"><option value="">All types</option>${types.map(m => `<option ${f.ty === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
         <select id="flq" aria-label="Minimum trading"><option value="0">Any trading volume</option>
           <option value="1e6" ${f.lq === '1e6' ? 'selected' : ''}>Trades > 1M per day</option>
           <option value="1e7" ${f.lq === '1e7' ? 'selected' : ''}>Trades > 10M per day</option>
@@ -194,7 +309,10 @@
     const rerender = () => { S.shown = 50; renderRows(); };
     $('#q').oninput = e => { f.q = e.target.value; rerender(); };
     $('#fm').onchange = e => { f.m = e.target.value; rerender(); };
-    $('#fty').onchange = e => { f.ty = e.target.value; rerender(); };
+    document.querySelectorAll('[data-ty]').forEach(b => b.onclick = () => {
+      f.ty = b.dataset.ty; rerender();
+      document.querySelectorAll('[data-ty]').forEach(o => o.classList.toggle('on', o === b));
+    });
     $('#flq').onchange = e => { f.lq = e.target.value; rerender(); };
     $('#export').onclick = exportWatchlist;
     document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { S.side = b.dataset.side; viewList(); });
@@ -316,7 +434,7 @@
     d.levels = { sup: T.levels.sup, res: T.levels.res };
 
     $('#view').innerHTML = `
-      <button class="back" onclick="history.length > 1 ? history.back() : (location.hash = '#/list/${S.tab}')">← Back to list</button>
+      <button class="back" onclick="history.length > 1 ? history.back() : (location.hash = '${S.back}')">← Back to list</button>
       <div class="ihead">
         <div><h2>${esc(m.name)}</h2>
           <div class="faint" style="font-size:13px">${esc(m.type)} · ${esc(m.market)} · ${[m.cfd ? 'CFD' : '', m.real ? 'Real shares' : ''].filter(Boolean).join(' · ')}</div></div>
@@ -470,7 +588,6 @@
       if (isTV()) t.splice(4, 0, ['SET:SET', 'SET index', ''], ['FX_IDC:USDTHB', 'USD/THB', '']);
       return t;
     };
-    const weekend = () => { const d = new Date().getUTCDay(), h = new Date().getUTCHours(); return d === 6 || (d === 0 && h < 21) || (d === 5 && h >= 22); };
     const fmt = p => chartFmt(p, decimalsOf(p));
 
     function renderTape() {

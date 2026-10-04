@@ -165,3 +165,26 @@ a.copy{color:var(--accent);display:inline-block}
 /* no visible scrollbars anywhere (wheel, trackpad, keys and touch still scroll) */
 *{scrollbar-width:none;-ms-overflow-style:none}
 *::-webkit-scrollbar{display:none;width:0;height:0}
+
+/* ---------- CFDs now board ---------- */
+.seg.wrap{flex-wrap:wrap}
+.seg .cnt{font-size:12px;color:var(--faint);margin-left:2px}
+.bsec{margin:18px 0 6px}
+.bsec h3{margin:0;font-size:17px}
+.bsec h3 .cnt{font-size:13px;color:var(--faint);font-weight:400;margin-left:4px}
+.bsub{font-size:13px;margin:2px 0 10px}
+.brow.b-up{border-left:3px solid var(--up)} .brow.b-down{border-left:3px solid var(--down)}
+.brow .name{white-space:normal}
+.verdict{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.02em;padding:2px 9px;border-radius:99px;background:var(--card2);color:var(--muted);margin-right:4px;vertical-align:1px}
+.verdict.g{background:var(--up-bg);color:var(--up)} .verdict.r{background:var(--down-bg);color:var(--down)}
+.verdict.soft{background:transparent;border:1px solid currentColor}
+.ladder{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-weight:400}
+.tfdot{font-size:11.5px;padding:1px 7px;border-radius:6px;background:var(--bg2);color:var(--faint);border:1px solid transparent}
+.tfdot.up{color:var(--up);background:var(--up-bg)} .tfdot.down{color:var(--down);background:var(--down-bg)}
+.tfdot.cur{border-color:var(--accent)}
+.brow .chip{white-space:normal}
+@media (max-width:640px){
+  .bsec .seg.wrap,.filters .seg.wrap{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
+  .seg.wrap button{flex:0 0 auto}
+}
+@media (max-width:340px){#updated{display:none}}

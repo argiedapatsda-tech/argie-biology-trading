@@ -14,10 +14,14 @@ from .data import download_many
 
 # interval -> (full-history period, top-up period, max candles kept)
 SPEC = {
-    "1d": ("5y", "5d", 1400),
+    # 2000: crypto trades 7 days a week, so 1400 days was under 200 weeks and the
+    # weekly 200-average (needed for every weekly score) never existed
+    "1d": ("5y", "5d", 2000),
     "1h": ("730d", "5d", 12000),
     "15m": ("60d", "5d", 3000),
 }
+# histories cut at the old 1d cap are re-downloaded once in full to get the missing years
+OLD_CAP = {"1d": 1400}
 
 
 def _path(folder, tf):
@@ -77,7 +81,7 @@ def update(folder, tf, tickers, log=print):
     fresh, new = [], []
     for t in tickers:
         df = hist.get(t)
-        if df is None or df.empty:
+        if df is None or df.empty or len(df) == OLD_CAP.get(tf):
             new.append(t)
         elif (now - df.index[-1].to_pydatetime()).days <= stale_limit:
             fresh.append(t)
