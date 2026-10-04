@@ -122,6 +122,13 @@ def load_universe(limit=None):
     # Thai SET stocks (TradingView mode only), built by scripts/build_tv_map.py
     uni = uni + (read_json(os.path.join(STATE, "universe_th.json"), []) or read_json(os.path.join(ROOT, "universe_th.json"), []))
     uni = [u for u in uni if u.get("ok", True)]
+    # the hand-checked crypto/index/commodity symbols always win: a monthly list built before a
+    # fix kept Toncoin on Yahoo's "TON-USD", a different coin worth 0.005 instead of ~1.5
+    other = read_json(os.path.join(ROOT, "scripts", "other_instruments.json"), {})
+    fixed = {x: v[0] for group in other.values() if isinstance(group, dict) for x, v in group.items()}
+    for u in uni:
+        if u["xtb"] in fixed and u["type"] not in ("Stocks", "ETFs"):
+            u["yahoo"] = fixed[u["xtb"]]
     if limit:
         # small test sample: keep every non-stock + the first N stocks/ETFs
         others = [u for u in uni if u["type"] not in ("Stocks", "ETFs")]
