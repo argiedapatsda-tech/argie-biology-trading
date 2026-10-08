@@ -202,3 +202,48 @@ a.copy{color:var(--accent);display:inline-block}
 @media (max-width:420px){.oc{padding:6px 7px;font-size:11.5px}.oc .op{font-size:17px}}
 details.how{margin:-4px 0 12px}
 details.how summary{cursor:pointer;color:var(--accent);font-size:14px;margin-bottom:6px}
+
+/* ---------- v6: sections, decision words, dictionary, plan ---------- */
+nav.tabs.sub{padding-top:0}
+nav.tabs .tab.main{font-weight:600}
+nav.tabs.sub .tab{font-size:13.5px;padding:6px 11px;border-radius:99px}
+nav.tabs.sub .tab.tb-up.on{border-color:var(--up);background:var(--up-bg)}
+nav.tabs.sub .tab.tb-down.on{border-color:var(--down);background:var(--down-bg)}
+.decrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-bottom:3px;font-weight:400}
+.dec{display:inline-block;font-size:15px;font-weight:800;letter-spacing:.06em;padding:2px 12px;border-radius:8px;background:var(--card2);color:var(--muted);line-height:1.5}
+.dec.buy{background:var(--up);color:#06140d} .dec.sell{background:var(--down);color:#1a0607}
+.dec.wait{background:transparent;border:1px solid var(--line);color:var(--muted)} .dec.none{background:transparent;color:var(--faint);border:1px dashed var(--line);font-size:12px}
+.dec.sm{font-size:12px;padding:1px 8px;letter-spacing:.04em}
+.decsub{font-size:12.5px;color:var(--muted)}
+.dlabel{font-size:11.5px;color:var(--faint);margin-right:-2px}
+a.dl{color:inherit;text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
+a.dl:hover{color:var(--accent)}
+.dstrip{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:0 0 10px}
+.dbox{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px;display:flex;flex-direction:column;gap:3px;font-size:12px}
+.dbox.buy{border-color:rgba(46,194,126,.5)} .dbox.sell{border-color:rgba(240,85,90,.5)}
+.dhow{align-self:center;font-size:13px}
+.otab{width:100%;border-collapse:collapse;font-size:13.5px}
+.otab td{padding:4px 4px;border-top:1px solid var(--line)}
+.otab thead td{border-top:0}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(380px,100%),1fr));gap:12px}
+.dterm h3{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+.dterm h3 small{margin:0}
+.dcat{margin-left:auto;font-size:11.5px;font-weight:400;color:var(--accent);background:var(--accent-bg);padding:1px 8px;border-radius:99px}
+.dplain{margin:0 0 8px;font-size:15px}
+.dmore{margin:0 0 8px;font-size:14px;color:var(--muted)}
+.dex{font-size:14px;background:var(--bg2);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px}
+.dex b{display:block;font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:.05em}
+.dsee{font-size:13px;margin-top:8px;color:var(--faint)}
+.dterm.hl{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg)}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;margin-bottom:10px}
+.pgrid label{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--muted)}
+.pgrid input,.pgrid select{background:var(--bg2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 9px;font:inherit;font-size:15px;min-height:38px}
+.pout .bigscore b{font-size:22px}
+.pout .bigscore span{display:block}
+.row .why.col{flex-direction:column;gap:3px}
+.reason{font-size:14px;color:var(--text);font-weight:400}
+.reason b{font-weight:700}
+.caution{font-size:13px;color:var(--warn)}
+.rname{font-weight:600}
+.row .meta{font-size:12px;font-weight:400;margin-top:1px}
+.decrow .sym{margin-left:0}

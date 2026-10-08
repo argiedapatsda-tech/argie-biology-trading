@@ -15,6 +15,9 @@ on:
       max:
         description: "Instruments in this run's daily slice"
         default: "600"
+      extra:
+        description: "Extra options for the daily scan (e.g. --cache-only to re-analyse everything without downloading)"
+        default: ""
 
 permissions:
   contents: read
@@ -69,13 +72,21 @@ jobs:
             python scripts/build_tv_map.py --to-state
           fi
 
+      - name: Find Yahoo symbols for instruments without data (weekly)
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          if [ ! -f state/yahoo_fix.json ] || [ -n "$(find state/yahoo_fix.json -mtime +7)" ]; then
+            python scripts/fix_missing.py
+          fi
+
       - name: Fast scan (15m / 1H / 4H)
         continue-on-error: true
         run: python run.py fast
 
       - name: Daily scan slice
         continue-on-error: true
-        run: python run.py full --max ${{ github.event.inputs.max || '600' }}
+        run: python run.py full --max ${{ github.event.inputs.max || '600' }} ${{ github.event.inputs.extra || '' }}
 
       - name: Save data for the next run
         if: always()

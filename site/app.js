@@ -29,7 +29,7 @@
   const TF_ORDER = ['15m', '1h', '4h', '1d', '1wk'];
 
   // ---------------------------------------------------------------- state
-  const S = { mode: 'xtb', tv: {}, summary: null, patterns: {}, tab: 'cfd', side: 'buy', ctf: '1d', shown: 50, filt: { q: '', m: '', ty: '', lq: '0' }, chart: null, detailCache: {}, back: '#/now' };
+  const S = { mode: 'xtb', tv: {}, summary: null, patterns: {}, side: 'buy', ctf: '1d', shown: 50, f: {}, chart: null, detailCache: {}, back: '#/cfd' };
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const store = {
@@ -59,40 +59,6 @@
   const weekend = () => { const n = new Date(), d = n.getUTCDay(), h = n.getUTCHours(); return d === 6 || (d === 0 && h < 21) || (d === 5 && h >= 22); };
   const isOpen = r => r.ty === 'Crypto' || !weekend();
 
-  // ---------------------------------------------------------------- tabs
-  const TABS = {
-    cfd: {
-      label: 'Strong setups', short: 'Setups',
-      intro: () => `Instruments where several signals line up right now. <b>Buy side</b> = upward setups, <b>Sell side</b> = downward setups (${isTV() ? 'a fall can only be traded with CFDs or short selling' : 'with CFDs you can profit from a fall'}). Score 0–100; only scores of 70+ are listed. Daily and Weekly cover everything; 4H / 1H only cover the ${S.summary ? S.summary.fast.length : ''} instruments in the fast-watch list.`,
-      filter: r => { const t = tfData(r, S.ctf); return tradable(r) && t && (S.side === 'buy' ? t.b >= 70 : t.s >= 70); },
-      sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || ((b.d.lq || 0) - (a.d.lq || 0)); },
-    },
-    inv_strong: {
-      label: 'Strong for investing', short: 'Strong invest',
-      intro: () => 'Stocks and ETFs with a healthy long-term picture (months to years). Long-term score 0–100 from the 200-day trend, 6- and 12-month performance, distance from the 52-week high and how wild the price moves. Only 70+ listed. <span class="warn">Company results (earnings, revenue, profit) are not included yet.</span>',
-      filter: r => isStockLike(r) && inv(r) >= 70,
-      sort: (a, b) => (inv(b) - inv(a)) || ((b.d.lq || 0) - (a.d.lq || 0)),
-    },
-    inv_weak: {
-      label: 'Weak for investing', short: 'Weak invest',
-      intro: () => 'Stocks and ETFs whose long-term picture is poor right now: below the 200-day average, lower than 6–12 months ago, far from their highs. Long-term score 30 or less. This is about the price trend only, not whether the company is good.',
-      filter: r => isStockLike(r) && inv(r) != null && inv(r) <= 30,
-      sort: (a, b) => (inv(a) - inv(b)) || ((b.d.lq || 0) - (a.d.lq || 0)),
-    },
-    avoid: {
-      label: 'Avoid for now', short: 'Avoid',
-      intro: () => (isTV() ? 'Instruments' : 'CFD instruments') + ' with <b>no clear direction</b> on the Daily chart: both the buy and the sell score are under 40. Signals conflict here, so trades are more of a coin flip. Usually better to wait.',
-      filter: r => tradable(r) && r.d.b != null && r.d.b < 40 && r.d.s < 40,
-      sort: (a, b) => (b.d.lq || 0) - (a.d.lq || 0),
-    },
-    all: {
-      label: 'Search all', short: 'All',
-      intro: () => `Every instrument we scan. Type a name or ${isTV() ? 'TradingView' : 'XTB'} symbol.`,
-      filter: () => true,
-      sort: (a, b) => (b.d.lq || 0) - (a.d.lq || 0),
-    },
-  };
-
   // ---------------------------------------------------------------- boot
   async function boot() {
     const choice = store.get('mode', null);
@@ -113,7 +79,7 @@
     $('#view').innerHTML = '<div class="empty">Loading the latest data…</div>';
     try {
       const [sum, pats, tv, od] = await Promise.all([fetchJSON('data/summary.json'), fetchJSON('data/patterns.json').catch(() => ({})), fetchJSON('tv.json').catch(() => ({})), fetchJSON('data/odds.json').catch(() => null)]);
-      S.summary = sum; S.patterns = pats; S.tv = tv; S.odds = od;
+      S.summary = unslim(sum); S.patterns = pats; S.tv = tv; S.odds = od;
     } catch (e) {
       $('#view').innerHTML = `<div class="empty">Could not load the data (${esc(e.message)}).<br>If the site was just created, the first scan may still be running - try again in a few minutes.</div>`;
       return;
@@ -138,9 +104,9 @@
     try {
       const sum = await fetchJSON('data/summary.json?t=' + Date.now());
       if (sum.generated === S.summary.generated) return;
-      S.summary = sum; showUpdated();
+      S.summary = unslim(sum); showUpdated();
       S.odds = await fetchJSON('data/odds.json?t=' + Date.now()).catch(() => S.odds);
-      if ($('#board')) renderBoard(); else if ($('#rows')) renderRows(); else if ($('#oddsList')) viewOdds(S.oside);
+      if ($('#board')) renderBoard(); else if ($('#rows')) renderRows(); else if ($('#oddsList')) { S.osig = ''; renderProb(); } else if ($('#srows')) renderSearch();
     } catch (e) { /* keep showing what we have */ }
   }
 
@@ -150,37 +116,209 @@
     return r.json();
   }
 
+  const hasData = r => !r.nd && r.d && r.d.p != null;
+
+  // ---------------------------------------------------------------- data clean-up
+  // run.py write_summary() stores repeated words as codes; this puts them back
+  const GRADES = ['Too few examples to judge', 'Historically reliable', 'Slight edge (could be luck)', 'No real edge'];
+  const BT_KEYS = ['b', 'bn', 'bg', 's', 'sn', 'sg', 'base'];
+  function fatT(t) {
+    if (t && Array.isArray(t.bt)) {
+      const o = {};
+      BT_KEYS.forEach((k, i) => { const v = t.bt[i]; o[k] = (k === 'bg' || k === 'sg') && typeof v === 'number' ? GRADES[v] : v; });
+      t.bt = o;
+    }
+    return t;
+  }
+  function unslim(sum) {
+    for (const r of sum.rows) {
+      r.d = fatT(r.d || {});
+      if (r.i) Object.values(r.i).forEach(fatT);
+      if (r.y == null) r.y = r.x;
+      r.cfd = !!r.cfd; r.real = !!r.real;
+    }
+    return sum;
+  }
+
+  // ---------------------------------------------------------------- search that forgives spelling
+  // "s&p", "sp500", "S&P 500" and "us500" all find the same row; extra names for the big markets
+  const ALIAS = {
+    US500: 'sp500 spx standard poors', US100: 'nasdaq ndx tech', US30: 'dow djia', US2000: 'russell small caps',
+    DE40: 'dax germany', UK100: 'ftse britain', FRA40: 'cac france', JP225: 'nikkei japan', EU50: 'stoxx europe',
+    GOLD: 'xau xauusd', SILVER: 'xag xagusd', OIL: 'brent crude', 'OIL.WTI': 'wti crude oil usoil', NATGAS: 'natural gas',
+    BITCOIN: 'btc btcusd', ETHEREUM: 'eth ether', SOLANA: 'sol', RIPPLE: 'xrp', DOGECOIN: 'doge', BINANCECOIN: 'bnb',
+    USDIDX: 'dxy dollar index', VIX: 'volatility fear', TNOTE: 'bond treasury 10 year', SHIBA: 'shib', TONCOIN: 'ton',
+  };
+  const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  function searchKey(r) {
+    const k = norm([r.n, r.x, r.x.replace(/\.[A-Z]+$/, ''), tvSym(r.x), ALIAS[r.x] || '', r.ty, r.m].join(' '));
+    return ' ' + k + ' ' + k.replace(/ /g, '') + ' ';
+  }
+  function matcher(q) {
+    const words = norm(q).split(' ').filter(Boolean);
+    if (!words.length) return () => true;
+    const glued = words.join('');
+    // "s&p" -> "s p": single letters only make sense glued together ("sp")
+    const loose = words.some(w => w.length < 2);
+    return r => {
+      const k = r._k || (r._k = searchKey(r));
+      return (!loose && words.every(w => k.includes(' ' + w) || (w.length > 2 && k.includes(w)))) || (glued.length > 1 && k.includes((loose ? ' ' : '') + glued));
+    };
+  }
+
+  // ---------------------------------------------------------------- the BUY / SELL / WAIT word
+  // Every row gets ONE word from probability: how often price went each way after past
+  // moments that looked like today on the same instrument. BUY / SELL only when it went that way
+  // at least 60 times in 100, more often than normal, and gained on average.
+  const WIN_MIN = 60;
+  const INV_SELL_MIN = 55;  // shares drift up over months, so falling 55 times in 100 is already unusually bad
+  // overlapping windows (a 3-month check every 3 days) are not independent, so the luck test
+  // counts them as fewer times
+  const nEff = (n, sp, h) => Math.max(1, n * Math.min(1, sp / h));
+  const D_LABEL = ['1 week later', '1 month later', '3 months later'];
+  const D_SHORT = ['about 1 week', 'about 1 month', 'about 3 months'];
+
+  function dailyEval(r, side, ks, minP) {
+    const od = r.d && r.d.od;
+    if (!od || !od.c || !od.c[0]) return null;
+    const buy = side === 'buy';
+    const cells = od.c.map((c, k) => {
+      if (!c) return null;
+      const n = c[0], wins = buy ? c[1] : c[2], p = wins / n * 100, fav = buy ? c[3] : -c[3];
+      const base = od.b[k] ? od.b[k][buy ? 0 : 1] : null;
+      return { k, n, wins, p, fav, base, z: luckZ(p, base, nEff(n, od.sp, od.hz[k])), label: D_LABEL[k], short: D_SHORT[k],
+        typ: buy ? c[4] : c[5], stop: buy ? c[6] : c[7], worst: null,
+        good: ks.includes(k) && p >= minP && (base == null || p > base) && fav > 0 && (buy ? c[4] : c[5]) != null };
+    });
+    const best = cells.filter(x => x && x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
+    return { src: 'd', L: od.L, cells, best, n: cells[0].n, live: false };
+  }
+
+  // ctx: 'h' (hourly odds, any horizon) / 'h0' 'h1' 'h2' (one horizon) / 'days' (1 week - 1 month) / 'inv' (1 - 3 months)
+  function decide(r, ctx) {
+    if (!hasData(r)) return { word: 'none' };
+    let b = null, s = null, from = ctx;
+    if (ctx[0] === 'h') {
+      const ks = ctx === 'h' ? [0, 1, 2] : [+ctx[1]];
+      if (S.odds && S.odds.rows && S.odds.rows[r.x]) {
+        b = oddsEval(r, 'buy', ks); s = oddsEval(r, 'sell', ks);
+        if (!b.st) { b = s = null; }
+      }
+      if (!b) { from = 'days'; ctx = 'days'; }
+    }
+    if (ctx === 'days') { b = dailyEval(r, 'buy', [0, 1], WIN_MIN); s = dailyEval(r, 'sell', [0, 1], WIN_MIN); }
+    if (ctx === 'inv') { b = dailyEval(r, 'buy', [1, 2], WIN_MIN); s = dailyEval(r, 'sell', [1, 2], INV_SELL_MIN); }
+    if (!b && !s) return { word: 'none', from };
+    // selling a real share you do not own is impossible, and on XTB only CFDs can be sold first
+    const canSell = ctx === 'inv' || isTV() || r.cfd;
+    const bb = b && b.best, sb = canSell && s && s.best;
+    if (bb && (!sb || bb.z >= sb.z)) return { word: 'buy', ev: b, c: bb, from };
+    if (sb) return { word: 'sell', ev: s, c: sb, from };
+    return { word: 'wait', ev: b || s, from };
+  }
+
+  function decBadge(dec, ctx, small) {
+    const inv = ctx === 'inv';
+    const W = { buy: 'BUY', sell: inv ? 'SELL' : 'SELL', wait: 'WAIT', none: 'NO ODDS' }[dec.word];
+    const tip = { buy: 'Past moments like today were usually followed by a rise.', sell: inv ? 'Past moments like today were usually followed by a fall. If you own it, consider selling or protecting it with a stop.' : 'Past moments like today were usually followed by a fall. A CFD sell gains when price falls.',
+      wait: 'No clear edge: after past moments like today price went up and down about as often as normal.', none: 'Not enough past history that looked like today to count.' }[dec.word];
+    let sub = '';
+    if (dec.c) sub = `${dec.word === 'buy' ? 'rose' : 'fell'} ${Math.round(dec.c.p)}% of the time · ${dec.c.short || dec.c.label}${inv && dec.word === 'sell' ? ' · if you own it' : ''}`;
+    else if (dec.word === 'wait') sub = 'no clear edge right now';
+    else sub = 'not enough history';
+    return `<span class="dec ${dec.word}${small ? ' sm' : ''}" title="${esc(tip)}">${W}</span>${small ? '' : `<span class="decsub">${esc(sub)}</span>`}`;
+  }
+
+  // ---------------------------------------------------------------- sections
+  const CATS = {
+    cfd: [['all', 'All'], ['Stocks', 'Stocks'], ['ETFs', 'ETFs'], ['Forex', 'Forex'], ['Indices', 'Indices'], ['Commodities', 'Commodities'], ['Crypto', 'Crypto']],
+    inv: [['all', 'All'], ['Stocks', 'Stocks'], ['ETFs', 'ETFs']],
+  };
+  const SUBS = {
+    cfd: [['now', 'Overview'], ['buy', '▲ Good for buying now'], ['sell', '▼ Good for selling now'], ['strong', 'Strong signals'], ['avoid', 'Avoid for now']],
+    inv: [['buy', '▲ Good for buying now'], ['sell', '▼ Time to sell'], ['strong', 'Strong for investing'], ['weak', 'Weak for investing']],
+  };
+  const SEC_NAME = { cfd: 'CFD trading', inv: 'Investing' };
+  const inSection = (r, sec) => inMode(r) && (sec === 'cfd' ? tradable(r) : isStockLike(r) && (isTV() || r.real));
+  const F = sec => S.f[sec] || (S.f[sec] = { cat: store.get('cat_' + sec, 'all'), mkt: '', q: '' });
+  function sectionPool(sec, opts = {}) {
+    const f = F(sec), m = matcher(f.q);
+    return S.summary.rows.filter(r => inSection(r, sec) && (opts.anyCat || f.cat === 'all' || r.ty === f.cat)
+      && (!f.mkt || !isStockLike(r) || r.m === f.mkt) && (opts.noSearch || m(r)));
+  }
+
+  function navTabs(sec, sub) {
+    const main = [['cfd', '📈 CFD trading', '#/cfd'], ['inv', '🏦 Investing', '#/inv'], ['search', '🔍 Search all', '#/search'],
+      ['dict', '📖 Dictionary', '#/dict'], ['alerts', '🔔 Alerts', '#/alerts'], ['library', 'Pattern library', '#/library'], ['practice', 'Practice', '#/practice']];
+    $('#tabs').innerHTML = main.map(([k, l, go]) => `<button class="tab main ${sec === k ? 'on' : ''}" data-go="${go}">${l}</button>`).join('');
+    const subs = SUBS[sec];
+    $('#subtabs').innerHTML = subs ? subs.map(([k, l]) => `<button class="tab ${sub === k ? 'on' : ''} ${k === 'buy' ? 'tb-up' : k === 'sell' ? 'tb-down' : ''}" data-go="#/${sec}/${k}">${l}</button>`).join('') : '';
+    $('#subtabs').classList.toggle('hidden', !subs);
+    document.querySelectorAll('#tabs [data-go], #subtabs [data-go]').forEach(b => b.onclick = () => { location.hash = b.dataset.go; });
+  }
+
+  // category chips + market + search, shared by every sub-tab of a section
+  function filterBar(sec, onChange) {
+    const f = F(sec);
+    const base = S.summary.rows.filter(r => inSection(r, sec));
+    const count = cat => cat === 'all' ? base.length : base.filter(r => r.ty === cat).length;
+    const cats = CATS[sec].filter(([k]) => k === 'all' || count(k));
+    const showMkt = f.cat === 'Stocks' || f.cat === 'ETFs' || sec === 'inv';
+    const markets = showMkt ? [...new Set(base.filter(isStockLike).map(r => r.m))].sort() : [];
+    const html = `<div class="filters">
+        <div class="seg wrap cats" role="group" aria-label="Kind">${cats.map(([k, l]) => `<button data-cat="${k}" class="${f.cat === k ? 'on' : ''}">${l} <span class="cnt">${count(k).toLocaleString()}</span></button>`).join('')}</div></div>
+      <div class="filters">
+        <input class="fq" type="search" placeholder="Search name or symbol (e.g. Apple, AAPL, gold, bitcoin)…" aria-label="Search" value="${esc(f.q)}">
+        ${markets.length > 1 ? `<select class="fm" aria-label="Stock market"><option value="">All stock markets</option>${markets.map(m => `<option ${f.mkt === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>` : ''}
+      </div>`;
+    const wire = () => {
+      document.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { f.cat = b.dataset.cat; store.set('cat_' + sec, f.cat); if (!(f.cat === 'Stocks' || f.cat === 'ETFs' || sec === 'inv')) f.mkt = ''; route(); });
+      const q = $('.fq'); if (q) q.oninput = e => { f.q = e.target.value; S.shown = 50; onChange(); };
+      const m = $('.fm'); if (m) m.onchange = e => { f.mkt = e.target.value; S.shown = 50; onChange(); };
+    };
+    return { html, wire };
+  }
+
   function route() {
     if (!S.summary) return;
     if (S.chart) { S.chart.destroy(); S.chart = null; }
     Live.want([]); Live.hook(null);
     const h = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').map(decodeURIComponent);
     window.scrollTo(0, 0);
+    // old links keep working
+    const OLD = { now: '#/cfd/now', 'odds/buy': '#/cfd/buy', 'odds/sell': '#/cfd/sell', 'list/cfd': '#/cfd/strong', 'list/avoid': '#/cfd/avoid',
+      'list/inv_strong': '#/inv/strong', 'list/inv_weak': '#/inv/weak', 'list/all': '#/search', odds: '#/cfd/buy' };
+    const old = OLD[h.slice(0, 2).join('/')] || OLD[h[0]];
+    if (old) { location.replace(old); return; }
     if (h[0] === 'i' && h[1]) return viewInstrument(h[1], h[2] || '1d');
     if (h[0] === 'library') return viewLibrary(h[1] || '1d');
     if (h[0] === 'practice') return viewPractice();
-    if (h[0] === 'odds') { const side = h[1] === 'sell' ? 'sell' : 'buy'; S.back = '#/odds/' + side; return viewOdds(side); }
-    if (h[0] === 'list' && TABS[h[1]]) { S.tab = h[1]; S.back = '#/list/' + h[1]; return viewList(); }
-    S.back = '#/now';
-    viewBoard();
+    if (h[0] === 'search') { S.back = '#/search'; return viewSearch(); }
+    if (h[0] === 'dict') return viewDict(h[1]);
+    if (h[0] === 'alerts') { S.back = '#/alerts'; return viewAlerts(); }
+    const sec = h[0] === 'inv' ? 'inv' : 'cfd';
+    const sub = SUBS[sec].some(([k]) => k === h[1]) ? h[1] : store.get('sub_' + sec, sec === 'cfd' ? 'now' : 'buy');
+    store.set('sub_' + sec, sub);
+    S.back = `#/${sec}/${sub}`;
+    viewSection(sec, sub);
   }
 
-  function navTabs(active) {
-    const items = [`<button class="tab ${active === 'now' ? 'on' : ''}" data-go="#/now">CFDs now</button>`,
-      `<button class="tab ${active === 'odds_buy' ? 'on' : ''}" data-go="#/odds/buy">▲ Good for buying now</button>`,
-      `<button class="tab ${active === 'odds_sell' ? 'on' : ''}" data-go="#/odds/sell">▼ Good for selling now</button>`].concat(Object.entries(TABS).map(([k, t]) => `<button class="tab ${active === k ? 'on' : ''}" data-go="#/list/${k}">${t.label}</button>`));
-    items.push(`<button class="tab ${active === 'library' ? 'on' : ''}" data-go="#/library">Pattern library</button>`);
-    items.push(`<button class="tab ${active === 'practice' ? 'on' : ''}" data-go="#/practice">Practice</button>`);
-    $('#tabs').innerHTML = items.join('');
-    $('#tabs').querySelectorAll('[data-go]').forEach(b => b.onclick = () => { location.hash = b.dataset.go; });
+  const dl = (id, txt) => `<a class="dl" href="#/dict/${id}">${txt}</a>`;
+
+  function viewSection(sec, sub) {
+    S.sec = sec; S.sub = sub; S.shown = 50;
+    navTabs(sec, sub);
+    if (sec === 'cfd' && sub === 'now') return viewBoard();
+    if (sub === 'buy' || sub === 'sell') return viewProb(sec, sub);
+    return viewList(sec, sub);
   }
 
-  // ---------------------------------------------------------------- CFDs now board
-  // Every non-stock CFD (crypto, forex, indices, commodities) in one place, each with a plain verdict
-  // for the chosen timeframe - including the ones that are NOT worth trading right now.
-  const BCATS = [['all', 'All'], ['Crypto', 'Crypto'], ['Forex', 'Forex'], ['Indices', 'Indices'], ['Commodities', 'Commodities'], ['stocks', 'Popular stock CFDs']];
+  // ---------------------------------------------------------------- CFD overview board
+  // Every CFD with one plain word for the chosen holding time - including the ones NOT worth trading now.
   const BTFS = ['15m', '1h', '4h', '1d'];
   const HIGHER = { '15m': '1h', '1h': '4h', '4h': '1d', '1d': '1wk' };
+  const TF_CTX = { '15m': 'h0', '1h': 'h1', '4h': 'h2', '1d': 'days' };
+  const HOLD = { '15m': 'about an hour', '1h': 'a few hours', '4h': 'about a day', '1d': 'days to weeks' };
 
   function verdict(t) {
     if (!t || t.b == null || t.s == null) return 'none';
@@ -192,106 +330,104 @@
   }
   const dirOf = v => v === 'buy' || v === 'lbuy' ? 'up' : v === 'sell' || v === 'lsell' ? 'down' : '';
 
-  function boardPool(cat) {
-    const fast = new Set(S.summary.fast || []);
-    return S.summary.rows.filter(r => {
-      if (!inMode(r)) return false;
-      if (cat === 'stocks') return isStockLike(r) && fast.has(r.x) && tradable(r);
-      return !isStockLike(r) && (cat === 'all' || r.ty === cat);
-    });
-  }
-
   function viewBoard() {
-    navTabs('now');
-    S.bcat = S.bcat || store.get('bcat', 'all');
-    S.btf = S.btf || store.get('btf', '1h');
-    S.showWait = false;
-    const closed = weekend();
+    S.btf = S.btf || store.get('btf', '1d');
+    S.showN = { go: 30, lean: 20, wait: 12, none: 8 };
+    const closed = weekend(), fb = filterBar('cfd', renderBoard);
     $('#view').innerHTML = `
-      <p class="intro">Every CFD market in one list with a plain answer: <b class="up">set up now</b>, <b class="warn">getting close</b> or <b>not now</b>.
-        Pick how long you plan to hold a trade: 15m / 1H for hours, 4H for a day or two, Daily for days to weeks.
-        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Forex, indices and commodities show where they closed on Friday and reopen Sunday night (UTC).</span>' : ''}</p>
-      <div class="filters">
-        <div class="seg wrap" role="group" aria-label="Market">${BCATS.map(([k, l]) => `<button data-bcat="${k}" class="${S.bcat === k ? 'on' : ''}">${l} <span class="cnt">${boardPool(k).length}</span></button>`).join('')}</div>
-        <div class="seg" role="group" aria-label="Timeframe">${BTFS.map(tf => `<button data-btf="${tf}" class="${S.btf === tf ? 'on' : ''}">${TF_LABEL[tf]}</button>`).join('')}</div>
-        <input id="bq" type="search" placeholder="Search…" aria-label="Search" value="${esc(S.bq || '')}">
-      </div>
+      <p class="intro">Every CFD with one word: <b class="up">BUY</b>, <b class="down">SELL</b> or <b>WAIT</b>. The word comes from probability: what price did after past moments that looked like today on the same instrument
+        (${dl('probability', 'how this works')}). Choose how long you plan to keep the trade open.
+        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Other markets show Friday\'s close and reopen Sunday night (UTC).</span>' : ''}</p>
+      ${fb.html}
+      <div class="filters"><span class="faint" style="font-size:13px">I will hold the trade for</span>
+        <div class="seg wrap" role="group" aria-label="Holding time">${BTFS.map(tf => `<button data-btf="${tf}" class="${S.btf === tf ? 'on' : ''}">${HOLD[tf]}</button>`).join('')}</div></div>
       <div id="board"></div>`;
-    document.querySelectorAll('[data-bcat]').forEach(b => b.onclick = () => { S.bcat = b.dataset.bcat; store.set('bcat', S.bcat); viewBoard(); });
+    fb.wire();
     document.querySelectorAll('[data-btf]').forEach(b => b.onclick = () => { S.btf = b.dataset.btf; store.set('btf', S.btf); viewBoard(); });
-    $('#bq').oninput = e => { S.bq = e.target.value; renderBoard(); };
     renderBoard();
   }
 
   function renderBoard() {
     const box = $('#board'); if (!box) return;
-    const tf = S.btf, q = (S.bq || '').trim().toLowerCase();
+    const tf = S.btf, ctx = TF_CTX[tf];
     const groups = { go: [], lean: [], wait: [], none: [] };
-    for (const r of boardPool(S.bcat)) {
-      if (q && !(r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q) || tvSym(r.x).toLowerCase().includes(q))) continue;
-      const t = tfData(r, tf), v = verdict(t);
-      const g = v === 'buy' || v === 'sell' ? 'go' : v === 'lbuy' || v === 'lsell' ? 'lean' : v;
-      groups[g].push({ r, t, v, str: t && t.b != null ? Math.max(t.b, t.s) : 0, agree: dirOf(verdict(tfData(r, HIGHER[tf]))) === dirOf(v) ? 1 : 0 });
+    for (const r of sectionPool('cfd')) {
+      const t = tfData(r, tf), v = verdict(t), dec = decide(r, ctx);
+      const g = dec.word === 'buy' || dec.word === 'sell' ? 'go' : !hasData(r) ? 'none' : dirOf(v) ? 'lean' : dec.word === 'none' && !t ? 'none' : 'wait';
+      groups[g].push({ r, t, v, dec, z: dec.c ? dec.c.z : 0, str: t && t.b != null ? Math.max(t.b, t.s) : 0 });
     }
-    // open markets first, then the bigger chart agreeing, then the strongest score
-    const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.agree - a.agree) || (b.str - a.str) || ((b.r.d.lq || 0) - (a.r.d.lq || 0));
+    const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.z - a.z) || (b.str - a.str) || ((b.r.d.lq || 0) - (a.r.d.lq || 0));
     Object.values(groups).forEach(g => g.sort(order));
     const SEC = {
-      go: ['✅ Set up now', 'up', 'Most signals point the same way on the ' + TF_LABEL[tf] + ' chart (score 70+ on one side, under 40 on the other).'],
-      lean: ['👀 Getting close', 'warn', 'Leaning one way but not strong yet. Worth watching, not rushing.'],
-      wait: ['⏸ Not now', '', 'No clear direction: buy and sell signals are mixed or weak. Trades here are close to a coin flip, so most traders wait.'],
-      none: ['No ' + TF_LABEL[tf] + ' data yet', 'faint', 'Not scanned on this timeframe yet (or too new to have a score).'],
+      go: ['BUY or SELL now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, more often than normal. Strongest evidence first.`],
+      lean: ['👀 Signals point one way, odds not there yet', 'warn', 'The chart signals lean up or down, but in the past this look did not win often enough. Watch, do not rush.'],
+      wait: ['⏸ Wait', '', 'No clear edge: price went up and down about as often as normal. Most traders skip these.'],
+      none: ['No data yet', 'faint', 'No price history from our data source yet (new, renamed or delisted). The live price and TradingView chart may still work.'],
     };
-    const html = Object.entries(groups).filter(([k, g]) => g.length).map(([k, g]) => {
+    const html = Object.entries(groups).filter(([, g]) => g.length).map(([k, g]) => {
       const [title, cls, sub] = SEC[k];
-      const capped = k === 'wait' && !S.showWait ? g.slice(0, 12) : g;
-      return `<section class="bsec"><h3 class="${cls}">${title} <span class="cnt">${g.length}</span></h3><p class="faint bsub">${sub}</p>
+      const capped = g.slice(0, S.showN[k]);
+      return `<section class="bsec"><h3 class="${cls}">${title} <span class="cnt">${g.length.toLocaleString()}</span></h3><p class="faint bsub">${sub}</p>
         <div class="rows">${capped.map(boardRow).join('')}</div>
-        ${capped.length < g.length ? `<button class="more" id="moreWait">Show all ${g.length} "not now"</button>` : ''}</section>`;
+        ${capped.length < g.length ? `<button class="more" data-more="${k}">Show more (${(g.length - capped.length).toLocaleString()} left)</button>` : ''}</section>`;
     }).join('');
-    box.innerHTML = html || '<div class="empty">Nothing matches.</div>';
+    box.innerHTML = html || '<div class="empty">Nothing matches. Try another kind or clear the search.</div>';
     box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${tf}`; });
-    const mw = $('#moreWait'); if (mw) mw.onclick = () => { S.showWait = true; renderBoard(); };
+    box.querySelectorAll('[data-more]').forEach(b => b.onclick = () => { S.showN[b.dataset.more] += 50; renderBoard(); });
     Live.paint(); Live.poll();
   }
 
-  function boardRow({ r, t, v }) {
-    const tf = S.btf, d = r.d, price = r.live ? r.live.p : d.p, lt = tvLive(r.x);
-    const side = dirOf(v) === 'down' ? 'sell' : 'buy';
-    const LBL = { buy: '▲ BUY setup', sell: '▼ SELL setup', lbuy: '↗ Leaning buy', lsell: '↘ Leaning sell', wait: '⏸ Not now', none: 'No data' };
-    const vcls = { buy: 'g', sell: 'r', lbuy: 'g soft', lsell: 'r soft', wait: '', none: '' }[v];
-    const chips = [];
-    if (t && t.b != null) chips.push(`<span class="chip">▲ ${t.b} · ▼ ${t.s}</span>`);
-    if (dirOf(v)) {
-      const hv = verdict(tfData(r, HIGHER[tf])), hl = TF_LABEL[HIGHER[tf]];
-      if (dirOf(hv) === dirOf(v)) chips.push(`<span class="chip g">${hl} chart agrees</span>`);
-      else if (dirOf(hv)) chips.push(`<span class="chip y">${hl} chart points the other way</span>`);
-      if (side === 'buy' && t.r > 72) chips.push(`<span class="chip y">RSI ${Math.round(t.r)}: stretched, late to buy</span>`);
-      if (side === 'sell' && t.r < 28) chips.push(`<span class="chip y">RSI ${Math.round(t.r)}: stretched, late to sell</span>`);
-      chips.push(pastChip(t.bt, side));
+  function priceBox(r, extraNote) {
+    const d = r.d || {}, price = r.live ? r.live.p : d.p, lt = tvLive(r.x);
+    return `<div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${d.ch != null ? pct(d.ch, 2) : ''}</div>${extraNote || ''}</div>`;
+  }
+
+  // One plain sentence for a row: why the word is what it is (numbers from the odds)
+  function reasonText(dec, sideHint) {
+    if (dec.word === 'none') return 'Not enough similar past moments on this instrument to count, so no word yet.';
+    if (dec.c) {
+      const up = dec.word === 'buy';
+      return `In the past, price was ${up ? 'higher' : 'lower'} ${dec.c.short.replace('about ', '')} later in <b>${Math.round(dec.c.p)} of 100</b> moments like this (on a normal day: ${Math.round(dec.c.base)}).`;
     }
-    if (t && t.tr) chips.push(trendChip(t.tr));
-    chips.push(patChips(t && t.pat));
-    if (!isOpen(r)) chips.push('<span class="chip y">Market closed (weekend)</span>');
-    // the same verdict on every timeframe, so you can see at a glance whether they line up
-    const ladder = BTFS.map(k => {
-      const kv = dirOf(verdict(tfData(r, k)));
-      return `<span class="tfdot ${kv} ${k === tf ? 'cur' : ''}" title="${TF_LABEL[k]}: ${kv === 'up' ? 'leaning up' : kv === 'down' ? 'leaning down' : 'no clear direction'}">${tfShort(k)} ${kv === 'up' ? '▲' : kv === 'down' ? '▼' : '–'}</span>`;
-    }).join('');
-    return `<button class="row brow b-${dirOf(v) || 'flat'}" data-x="${esc(r.x)}">
-      <div class="name"><span class="verdict ${vcls}">${LBL[v]}</span> ${esc(r.n)}<span class="sym">${esc(shownSym(r))}</span>
-        <div class="ladder">${ladder}<span class="faint" style="font-size:12px">${esc(r.ty)}</span></div></div>
-      <div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(d.ch, 2)}</div></div>
-      <div class="why">${chips.join('')}</div></button>`;
+    // WAIT: show the plain numbers, so it is clear why it is not a BUY or SELL
+    const ev = dec.ev, cells = ev && ev.cells ? ev.cells.filter(Boolean) : [], c0 = cells[0];
+    if (!c0) return 'No clear edge right now.';
+    return `No clear edge: in the past, price was higher ${c0.short.replace('about ', '')} later in ${Math.round(c0.p)} of 100 moments like this (on a normal day: ${Math.round(c0.base)}). Too close to a coin flip.`;
+  }
+
+  // at most ONE warning, and only when something really disagrees with the word
+  function cautionText(r, dec, t, tf) {
+    const v = verdict(t), d = dirOf(v);
+    if (dec.word === 'buy' && d === 'down') return 'The chart signals point down right now, against the odds. Smaller size, and use the stop.';
+    if (dec.word === 'sell' && d === 'up') return 'The chart signals point up right now, against the odds. Smaller size, and use the stop.';
+    if ((dec.word === 'buy' || dec.word === 'sell') && dec.c && dec.c.stop && dec.c.typ && Math.abs(dec.c.typ) / dec.c.stop < 0.5)
+      return `The safe stop is ${(dec.c.stop / Math.abs(dec.c.typ)).toFixed(1)}× bigger than a typical ${dec.word === 'buy' ? 'rise' : 'fall'}, so one loss can cancel several wins.`;
+    if (dec.word === 'buy' && t && t.r > 75) return `Already up a lot lately (RSI ${Math.round(t.r)}): buying now is buying late.`;
+    if (dec.word === 'sell' && t && t.r < 25) return `Already down a lot lately (RSI ${Math.round(t.r)}): selling now is selling late.`;
+    if (dec.word === 'wait' && d) return `The chart signals lean ${d}, but in the past that look did not win often enough here.`;
+    return '';
+  }
+
+  function reasonHTML(r, dec, t, tf, sideHint) {
+    const c = cautionText(r, dec, t, tf);
+    return `<div class="reason">${reasonText(dec, sideHint)}</div>${c ? `<div class="caution">⚠ Careful: ${c}</div>` : ''}${isOpen(r) ? '' : '<div class="caution faint">Market closed for the weekend.</div>'}`;
+  }
+
+  function boardRow({ r, t, v, dec }) {
+    const tf = S.btf;
+    const dir = dec.word === 'buy' ? 'up' : dec.word === 'sell' ? 'down' : 'flat';
+    return `<button class="row brow b-${dir}" data-x="${esc(r.x)}">
+      <div class="name"><div class="decrow">${decBadge(dec, TF_CTX[tf], true)}<span class="rname">${esc(r.n)}</span><span class="sym">${esc(shownSym(r))}</span></div>
+        <div class="faint meta">${esc(r.ty)}${isStockLike(r) ? ' · ' + esc(r.m) : ''}${dec.from === 'days' && TF_CTX[tf] !== 'days' && dec.word !== 'none' ? ' · odds from the Daily chart (no hourly odds for this one)' : ''}</div></div>
+      ${priceBox(r)}
+      <div class="why col">${reasonHTML(r, dec, t, tf, dirOf(v) === 'down' ? 'sell' : 'buy')}</div></button>`;
   }
 
   // ---------------------------------------------------------------- Good for buying / selling now
-  // "The last times it looked like this". Right now the 1H chart is described by 4 plain facts (read
-  // live from TradingView every 15 s). We then take every past hour of the last 6 months of THE SAME
-  // instrument that had the same 4 facts, and count what price did 1 hour, 4 hours and 1 day later.
-  // engine/odds.py does the counting; lookOf() must stay identical to look_index() there.
-  const ODDS_MIN_WIN = 60;
-  const OCATS = [['all', 'All'], ['Crypto', 'Crypto'], ['Forex', 'Forex'], ['Indices', 'Indices'], ['Commodities', 'Commodities'], ['stocks', 'Stock CFDs']];
+  // "The last times it looked like this". Hourly: each instrument's 1H chart described by 4 facts
+  // (re-checked live every 15 s), counted over its last 6 months (engine/odds.py odds()).
+  // Daily: 3 facts from the last closed daily candle, counted over all its history (odds_daily()).
+  // lookOf() must stay identical to look_index() in engine/odds.py.
   const lookOf = i => (i.close > i.sma1 ? 12 : 0) + (i.close > i.sma4 ? 6 : 0) + (i.rsi < 40 ? 0 : i.rsi > 60 ? 4 : 2) + (i.macd > i.sig ? 1 : 0);
   const hzLabel = (o, k) => k === 0 ? '1 hour later' : k === 1 ? '4 hours later' : o.hz[2] >= 20 ? '1 day later' : '1 trading day later';
   const hzShort = (o, k) => k === 0 ? 'about 1 hour' : k === 1 ? 'about 4 hours' : o.hz[2] >= 20 ? 'about 1 day' : 'about 1 trading day';
@@ -305,30 +441,30 @@
       `<span class="chip">RSI${r} ${['low (under 40)', 'middle (40–60)', 'high (over 60)'][rb]}</span>`,
       `<span class="chip ${mom ? 'g' : 'r'}">Momentum ${mom ? 'up' : 'down'}</span>`].join('');
   }
-
-  function oddsPool(side) {
-    const od = (S.odds && S.odds.rows) || {};
-    // selling needs a CFD (real shares can only be bought)
-    return S.summary.rows.filter(r => od[r.x] && inMode(r) && (side === 'buy' || r.cfd || !isStockLike(r)));
+  function lookTextD(L) {
+    const a50 = L >= 6, a200 = Math.floor(L / 3) % 2 === 1, rb = L % 3;
+    return [
+      `<span class="chip ${a50 ? 'g' : 'r'}">${a50 ? 'Above' : 'Below'} its 50-day average</span>`,
+      `<span class="chip ${a200 ? 'g' : 'r'}">${a200 ? 'Above' : 'Below'} its 200-day average</span>`,
+      `<span class="chip">RSI ${['low (under 40)', 'middle (40–60)', 'high (over 60)'][rb]}</span>`].join('');
   }
 
-  function oddsEval(r, side) {
+  function oddsEval(r, side, ks = [0, 1, 2]) {
     const o = S.odds.rows[r.x], lt = tvLive(r.x), c = lt && Live.q[lt];
     let L = o.look, live = false, rsi = null;
     if (c && c.ind && c.p != null && Live.fresh()) { L = lookOf({ ...c.ind, close: c.p }); live = true; rsi = c.ind.rsi; }
     const st = o.st[L];
     if (!st) return { L, live, rsi, st: null };
-    const n = st[0];
+    const n = st[0], sp = S.odds.spacing || 4;
     const cells = [0, 1, 2].map(k => {
       const h = st[k + 1], wins = side === 'buy' ? h[0] : h[1], p = wins / n * 100, fav = side === 'buy' ? h[2] : -h[2];
-      const base = o.base[k] ? o.base[k][side === 'buy' ? 0 : 1] : null, z = luckZ(p, base, n);
-      // good = right 6+ times in 10, better than what price normally did, and gained on average
-      return { k, wins, p, fav, base, z, good: p >= ODDS_MIN_WIN && (base == null || p > base) && fav > 0,
+      const base = o.base[k] ? o.base[k][side === 'buy' ? 0 : 1] : null, z = luckZ(p, base, nEff(n, sp, o.hz[k]));
+      return { k, n, wins, p, fav, base, z, label: hzLabel(o, k), short: hzShort(o, k),
+        good: ks.includes(k) && p >= WIN_MIN && (base == null || p > base) && fav > 0 && (side === 'buy' ? h[3] : h[4]) != null,
         typ: side === 'buy' ? h[3] : h[4], stop: side === 'buy' ? h[5] : h[6], worst: side === 'buy' ? h[7] : h[8] };
     });
-    // the most trustworthy horizon first: furthest above normal for the number of past times
     const best = cells.filter(x => x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
-    return { L, live, rsi, st, n, cells, best };
+    return { src: 'h', L, live, rsi, st, n, cells, best };
   }
 
   // could a result this good happen by luck, compared with what price normally did?
@@ -337,160 +473,163 @@
     const p0 = Math.min(Math.max((base != null ? base : 50) / 100, 0.05), 0.95);
     return (p / 100 - p0) / Math.sqrt(p0 * (1 - p0) / n);
   }
-  function luckChip(c, n) {
+  function luckChip(c) {
     const p0 = Math.min(Math.max((c.base != null ? c.base : 50) / 100, 0.05), 0.95);
     return c.z >= 1.65 ? `<span class="chip g" title="Clearly better than normal (${Math.round(p0 * 100)}%) - about 95% sure it is not luck.">Passes the luck test</span>`
-      : `<span class="chip y" title="Normally price went this way ${Math.round(p0 * 100)}% of the time. With ${n} past times, a result like this can still happen by luck.">Could still be luck</span>`;
+      : `<span class="chip y" title="Normally price went this way ${Math.round(p0 * 100)}% of the time. With this many past times, a result like this can still happen by luck.">Could still be luck</span>`;
   }
-
   function rrChip(typ, stop) {
-    // a typical gain much smaller than the stop means one loss wipes out several wins
     const rr = Math.abs(typ) / stop;
     if (rr < 0.5) return `<span class="chip y" title="When it went your way it usually moved ${Math.abs(typ).toFixed(2)}%, but the stop is ${stop.toFixed(2)}% away. One stopped-out trade can wipe out several wins.">Stop is ${(1 / rr).toFixed(1)}× bigger than the typical gain</span>`;
     return `<span class="chip" title="Typical gain when it went your way, compared with the stop distance">Typical gain vs stop: ${rr.toFixed(1)} : 1</span>`;
   }
 
-  function viewOdds(side) {
-    S.oside = side;
-    navTabs('odds_' + side);
-    S.ocat = S.ocat || store.get('ocat', 'all');
-    const buy = side === 'buy', closed = weekend();
-    if (!S.odds || !S.odds.rows) {
-      $('#view').innerHTML = '<div class="empty">The first scan with this new check has not finished yet. It runs about every 15 minutes - try again soon.</div>';
-      return;
-    }
+  function viewProb(sec, side) {
+    const buy = side === 'buy', inv = sec === 'inv', closed = weekend();
+    S.hold = S.hold || store.get('hold', 'days');
+    const hours = !inv && S.hold === 'hours';
+    if (hours && !(S.odds && S.odds.rows)) { S.hold = 'days'; }
+    const fb = filterBar(sec, renderProb);
+    const what = inv ? (buy ? 'a RISE over the next 1–3 months' : 'a FALL over the next 1–3 months') : (buy ? 'a RISE' : 'a FALL');
     $('#view').innerHTML = `
-      <p class="intro"><b class="${buy ? 'up' : 'down'}">${buy ? 'Where past moments like right now were usually followed by a RISE.' : 'Where past moments like right now were usually followed by a FALL.'}</b>
-        ${buy ? '' : 'With a CFD SELL you gain when the price falls (real shares cannot be sold this way, so only CFDs are listed).'}
-        <span class="warn">This is what happened before, not a prediction. Every row shows a stop loss: set it in XTB when you open the trade, and check the price in the XTB app first (it can differ slightly).</span>
-        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Other markets show Friday\'s close and are listed last.</span>' : ''}</p>
-      <details class="how"${store.get('howOpen', true) ? ' open' : ''}><summary>How it works</summary><p class="intro">Right now each instrument's 1H chart is described by 4 simple facts (shown on every row). We look back over the <b>last ${S.odds.months} months</b> of that same instrument,
-        find every hour that had the same 4 facts, and count what price did <b>1 hour, 4 hours and 1 day later</b>.
-        Listed only when price went your way <b>at least ${ODDS_MIN_WIN}% of the time</b>, more often than it normally does, from <b>at least ${S.odds.min_n} past times</b>, and ${buy ? 'rose' : 'fell'} on average.
-        The most trustworthy are at the top (those that beat normal by the most).
-        The facts are re-checked live every 15 seconds (crypto prices every second).
-        <b>Normal</b> = how often price went that way after any hour, whatever it looked like.</p></details>
-      <div class="filters">
-        <div class="seg wrap" role="group" aria-label="Market">${OCATS.map(([k, l]) => `<button data-ocat="${k}" class="${S.ocat === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-        <input id="oq" type="search" placeholder="Search…" aria-label="Search" value="${esc(S.oq || '')}">
-      </div>
+      <p class="intro"><b class="${buy ? 'up' : 'down'}">Where past moments like today were usually followed by ${what}.</b>
+        ${!inv && !buy ? 'A CFD sell gains when the price falls.' : ''}
+        ${inv && !buy ? 'For shares you already own: these usually fell afterwards, so think about selling or protecting them with a ' + dl('stop-loss', 'stop loss') + '. (You cannot sell shares you do not own.)' : ''}
+        <span class="warn">This is what happened before, not a promise. ${inv ? '' : 'Set the stop loss shown in XTB when you open the trade.'}</span>
+        ${closed && !inv ? '<br><span class="warn">Weekend: only crypto is trading. Other markets are listed last.</span>' : ''}</p>
+      ${!inv ? `<div class="filters"><span class="faint" style="font-size:13px">I will hold the trade for</span><div class="seg" role="group" aria-label="Holding time">
+        <button data-hold="hours" class="${S.hold === 'hours' ? 'on' : ''}">hours (1H chart)</button><button data-hold="days" class="${S.hold === 'days' ? 'on' : ''}">days to weeks (Daily chart)</button></div></div>` : ''}
+      <details class="how"${store.get('howOpen', true) ? ' open' : ''}><summary>How it works</summary><p class="intro">${probHow(inv, S.hold === 'hours' && !inv, buy)}</p></details>
+      ${fb.html}
       <div id="oddsStatus" class="countbar faint"></div>
       <div class="rows" id="oddsList"></div>`;
-    document.querySelectorAll('[data-ocat]').forEach(b => b.onclick = () => { S.ocat = b.dataset.ocat; store.set('ocat', S.ocat); viewOdds(side); });
-    $('#oq').oninput = e => { S.oq = e.target.value; S.osig = ''; renderOdds(); };
-    // first visit: explanation open; after the first close it stays closed
+    fb.wire();
+    document.querySelectorAll('[data-hold]').forEach(b => b.onclick = () => { S.hold = b.dataset.hold; store.set('hold', S.hold); route(); });
     $('.how').ontoggle = e => store.set('howOpen', e.target.open);
-    Live.want(oddsPool(side).map(r => tvLive(r.x)).filter(Boolean));
-    Live.hook(() => { if ($('#oddsList')) renderOdds(); });
+    if (S.hold === 'hours' && !inv) {
+      Live.want(sectionPool(sec, { anyCat: true, noSearch: true }).filter(r => S.odds.rows[r.x]).map(r => tvLive(r.x)).filter(Boolean));
+      Live.hook(() => { if ($('#oddsList')) renderProb(); });
+    }
     S.osig = '';
-    renderOdds();
+    renderProb();
     Live.poll();
   }
 
-  function renderOdds() {
-    const box = $('#oddsList'); if (!box) return;
-    const side = S.oside, cat = S.ocat, q = (S.oq || '').trim().toLowerCase();
-    let all = oddsPool(side);
-    if (cat === 'stocks') all = all.filter(isStockLike); else if (cat !== 'all') all = all.filter(r => r.ty === cat);
-    if (q) all = all.filter(r => r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q) || tvSym(r.x).toLowerCase().includes(q));
-    const good = [], cnt = { live: 0, few: 0, other: 0 };
-    for (const r of all) {
-      const e = oddsEval(r, side);
-      if (e.live) cnt.live++;
-      if (!e.st) cnt.few++; else if (e.best) good.push({ r, e }); else cnt.other++;
-    }
-    good.sort((a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
-    const liveTxt = Live.fresh() ? `Facts checked live for ${cnt.live === all.length ? 'all ' + all.length : cnt.live + ' of ' + all.length} instruments`
-      : 'Live check not reachable right now - using the facts from the last scan (' + ago(S.odds.generated) + ')';
-    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length}</b> favourable right now · ${cnt.other} with no clear edge today · ${cnt.few} without enough past times for today's look</span><span>${liveTxt}</span>`;
-    // only rebuild the list when something in it changed (prices update in place every second)
-    const sig = good.map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh();
-    if (sig === S.osig) { Live.paint(); return; }
-    S.osig = sig;
-    box.innerHTML = good.length ? good.map(oddsRow).join('') : `<div class="empty">Nothing is clearly favourable for ${side === 'buy' ? 'buying' : 'selling'} right now${cat !== 'all' ? ' in this group' : ''}.
-      That is normal: it changes as prices move, and this page re-checks by itself every 15 seconds.</div>`;
-    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/1h`; });
-    Live.paint();
+  function probHow(inv, hours, buy) {
+    const thr = inv && !buy ? INV_SELL_MIN : WIN_MIN;
+    if (hours) return `Right now each instrument's 1H chart is described by 4 simple facts (shown on each row). We look back over the <b>last ${S.odds.months} months</b> of the same instrument,
+      find every hour with the same 4 facts, and count what price did <b>1 hour, 4 hours and 1 day later</b>. The facts are re-checked live every 15 seconds (crypto prices every second).
+      Only the ${Object.keys(S.odds.rows).length} instruments on the fast-watch list have hourly odds.`
+      + ` Listed when price went your way <b>at least ${thr} times in 100</b>, more often than ${dl('base-rate', 'normal')}, and ${buy ? 'rose' : 'fell'} on average. Best evidence at the top.`;
+    return `Today each instrument's <b>Daily chart</b> is described by 3 simple facts (above or below its 50-day and 200-day averages, and its ${dl('rsi', 'RSI')}). We look back over <b>all its history (up to about 8 years)</b>,
+      find every day with the same 3 facts, and count what price did <b>1 week, 1 month and 3 months later</b>. ${inv ? 'Investing looks at 1 and 3 months.' : 'CFD trading looks at 1 week and 1 month.'}
+      Listed when price went your way <b>at least ${thr} times in 100</b>, more often than ${dl('base-rate', 'normal')}, and ${buy ? 'rose' : 'fell'} on average. Best evidence at the top.
+      The facts update each time the instrument is rescanned (a few times a day).`;
   }
 
-  function oddsRow({ r, e }) {
-    const side = S.oside, buy = side === 'buy', o = S.odds.rows[r.x], lt = tvLive(r.x), b = e.best;
+  function renderProb() {
+    const box = $('#oddsList'); if (!box) return;
+    const sec = S.sec, side = S.sub, inv = sec === 'inv', hours = !inv && S.hold === 'hours';
+    const all = sectionPool(sec);
+    const good = [], cnt = { live: 0, few: 0, other: 0 };
+    for (const r of all) {
+      if (!hasData(r)) { cnt.few++; continue; }
+      if (!inv && side === 'sell' && !(isTV() || r.cfd)) continue;
+      let e;
+      if (hours) {
+        if (!S.odds.rows[r.x]) continue;
+        e = oddsEval(r, side);
+        if (e.live) cnt.live++;
+        if (!e.st) { cnt.few++; continue; }
+      } else {
+        e = inv ? dailyEval(r, side, [1, 2], side === 'sell' ? INV_SELL_MIN : WIN_MIN) : dailyEval(r, side, [0, 1], WIN_MIN);
+        if (!e) { cnt.few++; continue; }
+      }
+      if (e.best) good.push({ r, e }); else cnt.other++;
+    }
+    // thinly traded shares (under 1M a day) jump around and have wide spreads: listed after the rest
+    const thin = r => isStockLike(r) && r.d.lq != null && r.d.lq < 1e6 ? 1 : 0;
+    good.sort((a, b) => (isOpen(b.r) - isOpen(a.r)) || (thin(a.r) - thin(b.r)) || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
+    const liveTxt = !hours ? `From each instrument's last scan` : Live.fresh() ? `Facts checked live for ${cnt.live} instruments` : 'Live check not reachable - using the last scan (' + ago(S.odds.generated) + ')';
+    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${side === 'buy' ? 'good for buying' : inv ? 'to sell' : 'good for selling'} now · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
+    const sig = good.slice(0, S.shown).map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh() + '#' + S.shown;
+    if (sig === S.osig) { Live.paint(); return; }
+    S.osig = sig;
+    const shown = good.slice(0, S.shown);
+    box.innerHTML = good.length ? shown.map(g => probRow(g, sec, side)).join('') + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : '')
+      : `<div class="empty">Nothing is clearly ${side === 'buy' ? 'good for buying' : 'good for selling'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
+      That is normal. It changes as prices move${hours ? ', and this page re-checks by itself every 15 seconds' : ''}.</div>`;
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${hours ? '1h' : '1d'}`; });
+    const m = $('#more'); if (m) m.onclick = () => { S.shown += 50; renderProb(); };
+    Live.paint(); Fund.want();
+  }
+
+  function probRow({ r, e }, sec, side) {
+    const buy = side === 'buy', inv = sec === 'inv', lt = tvLive(r.x), b = e.best, hourly = e.src === 'h';
     const c = lt && Live.q[lt], price = (c && c.p) || (r.live ? r.live.p : r.d.p), dp = decimalsOf(price);
     const lvl = f => `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>`;
-    const stop = Math.max(b.stop, 0.05), fs = buy ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + b.typ / 100;
-    const cells = e.cells.map(x => `<div class="oc ${x.good ? 'good' : ''} ${x === b ? 'best' : ''}">
-        <span class="faint">${hzLabel(o, x.k)}</span>
-        <span class="op num ${x.good ? (buy ? 'up' : 'down') : ''}">${Math.round(x.p)}%</span>
-        <span>${buy ? 'rose' : 'fell'} <b>${x.wins}</b> of ${e.n}</span>
-        <span class="faint">normal ${x.base != null ? Math.round(x.base) + '%' : '–'}</span></div>`).join('');
-    const crypto = lt && lt.startsWith('BINANCE:');
+    const stop = Math.max(b.stop || 0, 0.05), fs = buy ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + (b.typ || 0) / 100;
+    const dec = { word: side, c: b };
+    const t = hourly ? tfData(r, '1h') : r.d;
+    const extra = inv && lt && r.ty === 'Stocks' ? `<div class="why"><span class="fund" data-fund="${esc(lt)}"></span></div>` : '';
     return `<button class="row orow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(r.x)}">
-      <div class="name"><span class="verdict ${buy ? 'g' : 'r'}">${buy ? '▲ BUY' : '▼ SELL'} · ${Math.round(b.p)}%</span> ${esc(r.n)}<span class="sym">${esc(shownSym(r))}</span>
-        <div class="faint" style="font-size:12px;font-weight:400">${esc(r.ty)} · looked like this ${e.n} times in the last ${S.odds.months} months${e.live ? '' : ' · facts from the last scan'}</div></div>
-      <div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, dp) : '–'}</span><div class="lc ${r.d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(r.d.ch, 2)}</div>
-        <div class="faint" style="font-size:11px;font-weight:400">${lt ? (crypto ? 'live · every second' : 'live price') : 'last scan price'}</div></div>
-      <div class="why"><span class="faint" style="font-size:12.5px;align-self:center">Right now:</span>${lookText(e.L, e.rsi)}</div>
-      <div class="ocells">${cells}</div>
+      <div class="name"><div class="decrow">${decBadge(dec, inv ? 'inv' : 'x', true)}<span class="rname">${esc(r.n)}</span><span class="sym">${esc(shownSym(r))}</span></div>
+        <div class="faint meta">${esc(r.ty)}${isStockLike(r) ? ' · ' + esc(r.m) : ''} · based on ${e.n} similar past ${hourly ? 'hours' : 'days'}${hourly && e.live ? ' · checked live' : ''}</div></div>
+      ${priceBox(r, `<div class="faint" style="font-size:11px;font-weight:400">${lt ? (lt.startsWith('BINANCE:') ? 'live · every second' : 'live price') : 'last scan price'}</div>`)}
+      <div class="why col">${reasonHTML(r, dec, t, null, side)}</div>
       <div class="olevels">
-        <div>For a trade of ${hzShort(o, b.k)}:</div>
-        <div><span class="down">Stop loss</span> ${buy ? 'below' : 'above'} ${lvl(fs)} <span class="faint">(${buy ? '−' : '+'}${stop.toFixed(2)}%: 8 of 10 past times never went that far against you)</span></div>
-        <div><span class="up">IF</span> it moves like a typical past ${buy ? 'rise' : 'fall'}: ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}), not a prediction</span></div>
-      </div>
-      <div class="why">${luckChip(b, e.n)}${rrChip(b.typ, stop)}<span class="chip">Average result per trade: ${pct(b.fav, 2)} before XTB's spread</span>
-        <span class="chip y">Worst past move against you: ${buy ? '−' : '+'}${b.worst.toFixed(2)}%</span>${isOpen(r) ? '' : '<span class="chip y">Market closed (weekend)</span>'}</div>
+        <div>${inv && !buy ? 'If you own it' : `If you ${buy ? 'buy' : 'sell'}`}, for ${b.short}:</div>
+        <div><span class="down">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${buy ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
+        <div><span class="up">Typical ${buy ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}) · not a promise</span></div>
+      </div>${extra}
     </button>`;
   }
 
-  // ---------------------------------------------------------------- list view
-  function viewList() {
-    navTabs(S.tab);
-    const T = TABS[S.tab];
-    const rows = S.summary.rows.filter(inMode);
-    const markets = [...new Set(rows.map(r => r.m))].sort();
-    const types = [...new Set(rows.map(r => r.ty))].sort();
-    const f = S.filt;
-    const extra = S.tab === 'cfd' ? `
+  // ---------------------------------------------------------------- simple lists (strong / weak / avoid)
+  const LISTS = {
+    'cfd/strong': {
+      intro: () => `Instruments where several chart signals line up right now (signal score 70+ out of 100). <b>Buy side</b> = upward signals, <b>Sell side</b> = downward signals.
+        Signals are not the same as odds: the word on each row (BUY / SELL / WAIT) says whether moments like this actually worked before. Daily and Weekly cover everything; 4H / 1H only the fast-watch list.`,
+      filter: r => { const t = tfData(r, S.ctf); return t && (S.side === 'buy' ? t.b >= 70 : t.s >= 70); },
+      sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || ((b.d.lq || 0) - (a.d.lq || 0)); },
+    },
+    'cfd/avoid': {
+      intro: () => `CFDs with <b>no clear direction</b> on the Daily chart: both signal scores are under 40 and the odds show no edge. Trades here are close to a coin flip, so most traders wait.`,
+      filter: r => r.d.b != null && r.d.b < 40 && r.d.s < 40 && decide(r, 'days').word === 'wait',
+      sort: (a, b) => (b.d.lq || 0) - (a.d.lq || 0),
+    },
+    'inv/strong': {
+      intro: () => `Stocks and ETFs with a healthy long-term picture (months to years). Long-term trend score 0–100 from the 200-day average, 6- and 12-month performance, distance from the 52-week high and how wild the price moves. Only 70+ listed.
+        Each stock also shows ${dl('company-health', 'company health')} (sales, profit, debt) from TradingView.`,
+      filter: r => inv(r) >= 70,
+      sort: (a, b) => (inv(b) - inv(a)) || ((b.d.lq || 0) - (a.d.lq || 0)),
+    },
+    'inv/weak': {
+      intro: () => 'Stocks and ETFs whose long-term picture is poor right now: below the 200-day average, lower than 6–12 months ago, far from their highs. Long-term trend score 30 or less. This is the price trend; check company health before deciding.',
+      filter: r => inv(r) != null && inv(r) <= 30,
+      sort: (a, b) => (inv(a) - inv(b)) || ((b.d.lq || 0) - (a.d.lq || 0)),
+    },
+  };
+
+  function viewList(sec, sub) {
+    const key = sec + '/' + sub, T = LISTS[key];
+    const fb = filterBar(sec, renderRows);
+    const extra = key === 'cfd/strong' ? `<div class="filters">
       <div class="seg" role="group" aria-label="Side"><button data-side="buy" class="${S.side === 'buy' ? 'on' : ''}">▲ Buy side</button><button data-side="sell" class="${S.side === 'sell' ? 'on' : ''}">▼ Sell side</button></div>
-      <div class="seg" role="group" aria-label="Timeframe">${['1h', '4h', '1d', '1wk'].map(tf => `<button data-ctf="${tf}" class="${S.ctf === tf ? 'on' : ''}">${TF_LABEL[tf]}</button>`).join('')}</div>` : '';
-    const tyChips = `<div class="seg wrap" role="group" aria-label="Type"><button data-ty="" class="${f.ty ? '' : 'on'}">All types</button>${types.map(t => `<button data-ty="${esc(t)}" class="${f.ty === t ? 'on' : ''}">${esc(t)}</button>`).join('')}</div>`;
-    $('#view').innerHTML = `
-      <p class="intro">${T.intro()}</p>
-      <div class="filters">${tyChips}</div>
-      <div class="filters">
-        ${extra}
-        <input id="q" type="search" placeholder="Search name or ${isTV() ? 'TradingView' : 'XTB'} symbol…" value="${esc(f.q)}" aria-label="Search">
-        <select id="fm" aria-label="Market"><option value="">All markets</option>${markets.map(m => `<option ${f.m === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
-        <select id="flq" aria-label="Minimum trading"><option value="0">Any trading volume</option>
-          <option value="1e6" ${f.lq === '1e6' ? 'selected' : ''}>Trades > 1M per day</option>
-          <option value="1e7" ${f.lq === '1e7' ? 'selected' : ''}>Trades > 10M per day</option>
-          <option value="1e8" ${f.lq === '1e8' ? 'selected' : ''}>Trades > 100M per day</option></select>
-      </div>
+      <div class="seg" role="group" aria-label="Chart">${['1h', '4h', '1d', '1wk'].map(tf => `<button data-ctf="${tf}" class="${S.ctf === tf ? 'on' : ''}">${TF_LABEL[tf]}</button>`).join('')}</div></div>` : '';
+    $('#view').innerHTML = `<p class="intro">${T.intro()}</p>${fb.html}${extra}
       <div class="countbar"><span id="count" class="faint"></span><button class="copy" id="export" title="Download this list as a file you can import into a TradingView watchlist">⬇ TradingView watchlist</button></div>
       <div class="rows" id="rows"></div>`;
-    const rerender = () => { S.shown = 50; renderRows(); };
-    $('#q').oninput = e => { f.q = e.target.value; rerender(); };
-    $('#fm').onchange = e => { f.m = e.target.value; rerender(); };
-    document.querySelectorAll('[data-ty]').forEach(b => b.onclick = () => {
-      f.ty = b.dataset.ty; rerender();
-      document.querySelectorAll('[data-ty]').forEach(o => o.classList.toggle('on', o === b));
-    });
-    $('#flq').onchange = e => { f.lq = e.target.value; rerender(); };
+    fb.wire();
     $('#export').onclick = exportWatchlist;
-    document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { S.side = b.dataset.side; viewList(); });
-    document.querySelectorAll('[data-ctf]').forEach(b => b.onclick = () => { S.ctf = b.dataset.ctf; viewList(); });
+    document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { S.side = b.dataset.side; route(); });
+    document.querySelectorAll('[data-ctf]').forEach(b => b.onclick = () => { S.ctf = b.dataset.ctf; route(); });
     renderRows();
   }
 
   function currentList() {
-    const T = TABS[S.tab], f = S.filt, q = f.q.trim().toLowerCase(), minLq = +f.lq;
-    const list = S.summary.rows.filter(r => {
-      if (!inMode(r)) return false;
-      if (f.m && r.m !== f.m) return false;
-      if (f.ty && r.ty !== f.ty) return false;
-      if (minLq && r.d.lq != null && r.d.lq < minLq) return false;
-      if (q && !(r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q) || tvSym(r.x).toLowerCase().includes(q))) return false;
-      try { return T.filter(r); } catch (e) { return false; }
-    });
+    const T = LISTS[S.sec + '/' + S.sub];
+    const list = sectionPool(S.sec).filter(r => { if (!hasData(r)) return false; try { return T.filter(r); } catch (e) { return false; } });
     list.sort(T.sort);
     return list;
   }
@@ -499,8 +638,7 @@
     // TradingView's "Import list" reads comma-separated symbols; ###Name starts a section
     const list = currentList().map(r => tvLive(r.x)).filter(Boolean).slice(0, 1000);
     if (!list.length) return;
-    const T = TABS[S.tab];
-    const name = `Argie ${T.label}${S.tab === 'cfd' ? ` ${S.side} ${TF_LABEL[S.ctf]}` : ''}`;
+    const name = `Argie ${SEC_NAME[S.sec]} ${S.sub}${S.sub === 'strong' && S.sec === 'cfd' ? ` ${S.side} ${TF_LABEL[S.ctf]}` : ''}`;
     const blob = new Blob([`###${name},` + list.join(',')], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase() + '.txt';
@@ -513,49 +651,218 @@
     if (!$('#rows')) return;
     const list = currentList();
     $('#count').textContent = `${list.length.toLocaleString()} match${list.length === 1 ? '' : 'es'}`;
-    if (!list.length) { $('#rows').innerHTML = '<div class="empty">Nothing matches right now. Try another timeframe, side or filter.</div>'; return; }
+    if (!list.length) { $('#rows').innerHTML = '<div class="empty">Nothing matches right now. Try another kind, chart or filter.</div>'; return; }
     $('#rows').innerHTML = list.slice(0, S.shown).map(rowHTML).join('') +
       (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
-    $('#rows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${S.tab === 'cfd' ? S.ctf : '1d'}`; });
+    $('#rows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${S.sec === 'cfd' && S.sub === 'strong' ? S.ctf : '1d'}`; });
     const m = $('#more'); if (m) m.onclick = () => { S.shown += 50; renderRows(); };
-    Live.paint(); Live.poll();
+    Live.paint(); Live.poll(); Fund.want();
   }
 
   function trendChip(tr) { return tr === 'up' ? '<span class="chip g">Uptrend</span>' : tr === 'down' ? '<span class="chip r">Downtrend</span>' : '<span class="chip">Sideways</span>'; }
   function patChips(pats) {
-    return (pats || []).filter(p => p.dir !== 'neutral').slice(0, 2).map(p => `<span class="chip ${p.dir === 'bull' ? 'g' : 'r'}">${p.dir === 'bull' ? '▲' : '▼'} ${esc(PAT[p.id][0])}${p.ago ? ` (${p.ago} ago)` : ''}</span>`).join('');
+    return (pats || []).filter(p => p.dir !== 'neutral').slice(0, 2).map(p => `<span class="chip ${p.dir === 'bull' ? 'g' : 'r'}">${p.dir === 'bull' ? '▲' : '▼'} ${esc(PAT[p.id][0])}${p.ago ? ` (${p.ago} candle${p.ago > 1 ? 's' : ''} ago)` : ''}</span>`).join('');
   }
   function pastChip(bt, side) {
     if (!bt) return '';
     const w = side === 'buy' ? bt.b : bt.s, n = side === 'buy' ? bt.bn : bt.sn, g = side === 'buy' ? bt.bg : bt.sg;
     if (!n) return '';
-    const base = side === 'buy' ? bt.base : (bt.base != null ? 100 - bt.base : null);
+    const base = side === 'buy' ? bt.base : (bt.base != null ? Math.round((100 - bt.base) * 10) / 10 : null);
     const cls = g === 'Historically reliable' ? 'g' : g === 'Slight edge (could be luck)' ? 'b' : g === 'No real edge' ? 'y' : '';
-    return `<span class="chip ${cls}" title="${esc(g)}">Past: worked ${w}% of ${n} times (normal ${base}%)</span>`;
+    return `<span class="chip ${cls}" title="${esc(g)}. When this signal fired before, how often did price then move its way?">This signal worked ${w}% of ${n} times (normal ${base}%)</span>`;
   }
 
   function rowHTML(r) {
-    const d = r.d, price = r.live ? r.live.p : d.p, lt = tvLive(r.x);
-    let right = `<div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(d.ch, 2)}</div></div>`;
-    let why = '';
-    if (S.tab === 'cfd') {
-      const t = tfData(r, S.ctf), sc = S.side === 'buy' ? t.b : t.s, col = S.side === 'buy' ? 'var(--up)' : 'var(--down)';
-      why = `<span class="score ${S.side === 'buy' ? 'up' : 'down'}">${S.side === 'buy' ? '▲' : '▼'} ${sc} ${meter(sc, col)}</span>${trendChip(t.tr)}${patChips(t.pat)}<span class="chip">RSI ${Math.round(t.r)}</span>${pastChip(t.bt, S.side)}${S.ctf !== '1d' ? `<span class="chip b">${TF_LABEL[S.ctf]}</span>` : ''}`;
-    } else if (S.tab === 'inv_strong' || S.tab === 'inv_weak') {
-      const v = d.inv, good = S.tab === 'inv_strong';
-      why = `<span class="score ${good ? 'up' : 'down'}">Long-term ${v.score} ${meter(v.score, good ? 'var(--up)' : 'var(--down)')}</span>
-        <span class="chip ${v.ret12m >= 0 ? 'g' : 'r'}">12 months ${pct(v.ret12m)}</span><span class="chip ${v.ret6m >= 0 ? 'g' : 'r'}">6 months ${pct(v.ret6m)}</span>
-        <span class="chip">${v.from_high > -1 ? 'At 52-week high' : pct(v.from_high) + ' from 52-week high'}</span><span class="chip ${v.vol > 45 ? 'y' : ''}">Volatility ${v.vol}%</span>`;
-    } else if (S.tab === 'avoid') {
-      why = `<span class="chip">▲ Buy score ${d.b}</span><span class="chip">▼ Sell score ${d.s}</span>${trendChip(d.tr)}<span class="chip y">No clear direction</span>`;
-    } else {
-      why = `<span class="chip ${d.b >= 70 ? 'g' : ''}">▲ ${d.b ?? '–'}</span><span class="chip ${d.s >= 70 ? 'r' : ''}">▼ ${d.s ?? '–'}</span>${trendChip(d.tr)}${d.inv ? `<span class="chip">Long-term ${d.inv.score}</span>` : ''}`;
+    const d = r.d, key = S.sec + '/' + S.sub;
+    let info = '', ctx = S.sec === 'inv' ? 'inv' : 'days', t = d, hint = 'buy';
+    if (key === 'cfd/strong') {
+      t = tfData(r, S.ctf);
+      const sc = S.side === 'buy' ? t.b : t.s;
+      ctx = { '1h': 'h1', '4h': 'h2' }[S.ctf] || 'days';
+      hint = S.side;
+      info = `<span class="chip" title="How many chart signals point this way, out of 100">${S.side === 'buy' ? '▲ Up' : '▼ Down'} signals ${sc}/100 on the ${TF_LABEL[S.ctf]} chart</span>`;
+    } else if (S.sec === 'inv') {
+      const v = d.inv;
+      info = `<span class="chip">Long-term trend ${v.score}/100</span><span class="chip">12 months ${pct(v.ret12m)}</span><span class="chip">${v.from_high > -1 ? 'At its 52-week high' : pct(v.from_high) + ' from its 52-week high'}</span>
+        ${tvLive(r.x) && r.ty === 'Stocks' ? `<span class="fund" data-fund="${esc(tvLive(r.x))}"></span>` : ''}`;
+    } else if (key === 'cfd/avoid') {
+      info = '<span class="chip">Signals mixed: none above 40/100</span>';
     }
-    const tags = isTV() ? (r.tvo ? 'Thai SET (not on XTB)' : '') : [r.cfd ? 'CFD' : '', r.real ? 'Real shares' : ''].filter(Boolean).join(' · ');
+    const dec = decide(r, ctx);
     return `<button class="row" data-x="${esc(r.x)}">
-      <div class="name">${esc(r.n)}<span class="sym">${esc(shownSym(r))}</span><div class="faint" style="font-size:12px;font-weight:400">${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${d.lq ? ' · trades ' + money(d.lq) + ' ' + esc(r.cur || '') + '/day' : ''}</div></div>
-      ${right}<div class="why">${why}</div></button>`;
+      <div class="name"><div class="decrow">${decBadge(dec, ctx, true)}<span class="rname">${esc(r.n)}</span><span class="sym">${esc(shownSym(r))}</span></div><div class="faint meta">${metaLine(r)}</div></div>
+      ${priceBox(r)}<div class="why col">${reasonHTML(r, dec, t, null, hint)}</div>${info ? `<div class="why">${info}</div>` : ''}</button>`;
   }
+
+  function metaLine(r) {
+    const d = r.d || {};
+    const tags = isTV() ? (r.tvo ? 'Thai SET (not on XTB)' : '') : [r.cfd ? 'CFD' : '', r.real ? 'Real shares' : ''].filter(Boolean).join(' + ');
+    return `${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${d.lq ? ' · trades ' + money(d.lq) + ' ' + esc(r.cur || '') + '/day' : ''}`;
+  }
+
+  // ---------------------------------------------------------------- search all
+  function viewSearch() {
+    navTabs('search');
+    S.sq = S.sq || '';
+    S.sty = S.sty || '';
+    S.shown = 50;
+    const rows = S.summary.rows.filter(inMode);
+    const types = [...new Set(rows.map(r => r.ty))].sort();
+    const nd = rows.filter(r => !hasData(r)).length;
+    $('#view').innerHTML = `<p class="intro">Every ${isTV() ? '' : 'XTB '}instrument we know: <b>${rows.length.toLocaleString()}</b>. Type a company name, ticker or nickname (Apple, AAPL, nasdaq, gold, btc).
+        Each one shows two words: what the odds say for a <b>CFD trade</b> (days to weeks) and for <b>investing</b> (months).
+        ${nd ? `<span class="faint">${nd.toLocaleString()} have no price history from our data source yet; they still show a live price and chart where TradingView has one.</span>` : ''}</p>
+      <div class="filters"><input id="sq" type="search" placeholder="Search everything…" aria-label="Search everything" value="${esc(S.sq)}" autofocus></div>
+      <div class="filters"><div class="seg wrap" role="group" aria-label="Kind"><button data-sty="" class="${S.sty ? '' : 'on'}">All</button>${types.map(t => `<button data-sty="${esc(t)}" class="${S.sty === t ? 'on' : ''}">${esc(t)}</button>`).join('')}</div></div>
+      <div class="countbar"><span id="count" class="faint"></span></div>
+      <div class="rows" id="srows"></div>`;
+    $('#sq').oninput = e => { S.sq = e.target.value; S.shown = 50; renderSearch(); };
+    document.querySelectorAll('[data-sty]').forEach(b => b.onclick = () => { S.sty = b.dataset.sty; document.querySelectorAll('[data-sty]').forEach(o => o.classList.toggle('on', o === b)); S.shown = 50; renderSearch(); });
+    renderSearch();
+  }
+
+  function renderSearch() {
+    const m = matcher(S.sq), q = norm(S.sq);
+    const list = S.summary.rows.filter(r => inMode(r) && (!S.sty || r.ty === S.sty) && m(r));
+    // exact symbol / name start first, then the most traded
+    const g = q.replace(/ /g, '');
+    const rank = r => {
+      if (!q) return 3;
+      const x = norm(r.x.replace(/\.[A-Z]+$/, '')).replace(/ /g, ''), n = norm(r.n), al = (ALIAS[r.x] || '').split(' ');
+      return x === g || al.includes(g) ? 0 : n.startsWith(q) || n.replace(/ /g, '').startsWith(g) ? 1 : (' ' + n).includes(' ' + q) ? 2 : 3;
+    };
+    list.sort((a, b) => rank(a) - rank(b) || hasData(b) - hasData(a) || ((b.d.lq || 0) - (a.d.lq || 0)));
+    $('#count').textContent = `${list.length.toLocaleString()} match${list.length === 1 ? '' : 'es'}`;
+    if (!list.length) { $('#srows').innerHTML = `<div class="empty">Nothing found for "${esc(S.sq)}". Try fewer letters, the ticker (e.g. AAPL) or the company's main name.</div>`; return; }
+    $('#srows').innerHTML = list.slice(0, S.shown).map(searchRow).join('') + (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
+    $('#srows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/1d`; });
+    const mo = $('#more'); if (mo) mo.onclick = () => { S.shown += 50; renderSearch(); };
+    Live.paint(); Live.poll();
+  }
+
+  function searchRow(r) {
+    const d = r.d || {};
+    const words = [];
+    if (tradable(r)) words.push(`<span class="dlabel">CFD</span>${decBadge(decide(r, 'days'), 'days', true)}`);
+    if (isStockLike(r) && (isTV() || r.real)) words.push(`<span class="dlabel">Investing</span>${decBadge(decide(r, 'inv'), 'inv', true)}`);
+    const chips = hasData(r) ? (d.inv ? `<span class="chip">Long-term trend ${d.inv.score}/100</span>` : '')
+      : '<span class="chip y">No price history from our data source yet: tap for the live chart</span>';
+    return `<button class="row" data-x="${esc(r.x)}">
+      <div class="name"><div class="decrow">${words.join('<span style="width:10px"></span>')}</div><span class="rname">${esc(r.n)}</span><span class="sym">${esc(shownSym(r))}</span><div class="faint" style="font-size:12px;font-weight:400">${metaLine(r)}</div></div>
+      ${priceBox(r)}${chips ? `<div class="why">${chips}</div>` : ''}</button>`;
+  }
+
+  // ---------------------------------------------------------------- dictionary
+  function viewDict(id) {
+    navTabs('dict');
+    const D = window.DICT || [];
+    S.dq = id ? '' : (S.dq || '');
+    S.dcat = id ? '' : (S.dcat || '');
+    const cats = [...new Set(D.map(t => t.cat))];
+    $('#view').innerHTML = `<p class="intro">Every word used on this site, in plain language: what it means, why it matters, and an everyday example. Tap a word anywhere on the site that is <a class="dl">underlined like this</a> to jump here.</p>
+      <div class="filters"><input id="dq" type="search" placeholder="Search a word (e.g. stop loss, RSI, spread)…" aria-label="Search the dictionary" value="${esc(S.dq)}"></div>
+      <div class="filters"><div class="seg wrap" role="group" aria-label="Topic"><button data-dcat="" class="${S.dcat ? '' : 'on'}">All topics</button>${cats.map(c => `<button data-dcat="${esc(c)}" class="${S.dcat === c ? 'on' : ''}">${esc(c)}</button>`).join('')}</div></div>
+      <div id="dlist" class="dgrid"></div>`;
+    const draw = () => {
+      const m = norm(S.dq);
+      const list = D.filter(t => (!S.dcat || t.cat === S.dcat) && (!m || norm(t.term + ' ' + (t.aka || '') + ' ' + t.plain).includes(m)));
+      $('#dlist').innerHTML = list.length ? list.map(t => `<article class="card dterm${t.id === id ? ' hl' : ''}" id="d-${t.id}">
+          <h3>${esc(t.term)}${t.aka ? ` <small>${esc(t.aka)}</small>` : ''}<span class="dcat">${esc(t.cat)}</span></h3>
+          <p class="dplain">${t.plain}</p>
+          <p class="dmore">${t.more}</p>
+          <div class="dex"><b>Example</b> ${t.ex}</div>
+          ${t.see ? `<div class="dsee">See also: ${t.see.map(s => { const o = D.find(x => x.id === s); return o ? `<a href="#/dict/${s}">${esc(o.term)}</a>` : ''; }).join(' · ')}</div>` : ''}
+        </article>`).join('') : '<div class="empty">No word matches. Try a shorter search.</div>';
+    };
+    $('#dq').oninput = e => { S.dq = e.target.value; draw(); };
+    document.querySelectorAll('[data-dcat]').forEach(b => b.onclick = () => { S.dcat = b.dataset.dcat; document.querySelectorAll('[data-dcat]').forEach(o => o.classList.toggle('on', o === b)); draw(); });
+    draw();
+    if (id) { const el = document.getElementById('d-' + id); if (el) setTimeout(() => el.scrollIntoView({ block: 'center' }), 30); }
+  }
+
+  // ---------------------------------------------------------------- alerts + report card
+  async function viewAlerts() {
+    navTabs('alerts');
+    $('#view').innerHTML = '<div class="empty">Loading alerts…</div>';
+    let al = [];
+    try { al = await fetchJSON('data/alerts.json?t=' + Date.now()); } catch (e) { /* none yet */ }
+    const byX = new Map(S.summary.rows.map(r => [r.x, r]));
+    const items = al.slice().reverse().slice(0, 300).map(a => {
+      const r = byX.get(a.x), now = r ? (r.live ? r.live.p : r.d.p) : null;
+      const mv = now != null && a.price ? (now / a.price - 1) * 100 : null;
+      const ok = mv == null ? null : a.side === 'buy' ? mv > 0 : mv < 0;
+      return { a, r, now, mv, ok, age: (Date.now() - new Date(a.at)) / 864e5 };
+    });
+    const judged = items.filter(i => i.ok != null && i.age >= 1);
+    const wins = judged.filter(i => i.ok).length;
+    $('#view').innerHTML = `<p class="intro">Every time a signal score crossed 70, or a candle pattern that has worked before appeared at a support or resistance level, the scanner wrote it down here.
+        The report card checks honestly how each alert did: the price when it fired compared with the latest price.
+        ${''}Telegram messages to your phone start once the bot is set up.</p>
+      <div class="grid2" style="margin:0 0 12px"><div class="card"><h3>Report card <small>alerts at least 1 day old</small></h3>
+        ${judged.length ? `<div class="bigscore"><div><span class="muted">Went the alert's way</span><b class="num ${wins / judged.length >= 0.5 ? 'up' : 'down'}">${Math.round(wins / judged.length * 100)}%</b></div><div><span class="muted">Alerts checked</span><b class="num">${judged.length}</b></div></div>
+        <div class="note">"Went its way" = a buy alert's price is higher now, a sell alert's is lower. It ignores stops and timing, so it is a rough guide, not a trading result. Around 50% means the alerts are no better than a coin flip.</div>` : '<p class="faint">Not enough alerts older than a day yet.</p>'}</div></div>
+      <div class="rows">${items.length ? items.map(alertRow).join('') : '<div class="empty">No alerts yet.</div>'}</div>`;
+    document.querySelectorAll('#view [data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${b.dataset.tf || '1d'}`; });
+  }
+
+  function alertRow({ a, r, now, mv, ok }) {
+    const buy = a.side === 'buy';
+    const what = a.kind === 'setup' ? `${buy ? 'Buy' : 'Sell'}-side signal score reached ${a.score} on the ${TF_LABEL[a.tf] || a.tf} chart`
+      : `${PAT[a.pid] ? PAT[a.pid][0] : a.pid} pattern at a key level on the ${TF_LABEL[a.tf] || a.tf} chart`;
+    const dp = a.price ? decimalsOf(a.price) : 2;
+    return `<button class="row brow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(a.x)}" data-tf="${esc(a.tf)}">
+      <div class="name"><span class="dec ${buy ? 'buy' : 'sell'} sm">${buy ? 'BUY' : 'SELL'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
+        <div class="faint" style="font-size:12.5px;font-weight:400">${esc(what)} · ${ago(a.at)}</div></div>
+      <div class="px num">${a.price ? chartFmt(a.price, dp) : '–'}<div class="faint" style="font-size:11px;font-weight:400">price at alert</div></div>
+      <div class="why">${mv != null ? `<span class="chip ${ok ? 'g' : 'r'}">Since then: ${pct(mv, 2)} · ${ok ? 'went its way' : 'went against it'}</span><span class="chip">Latest ${chartFmt(now, dp)}</span>` : '<span class="chip">No latest price</span>'}</div></button>`;
+  }
+
+  // ---------------------------------------------------------------- company health (live from TradingView)
+  const Fund = (() => {
+    const URL_SCAN = 'https://scanner.tradingview.com/global/scan';
+    const COLS = ['market_cap_basic', 'price_earnings_ttm', 'earnings_per_share_diluted_yoy_growth_ttm', 'total_revenue_yoy_growth_ttm', 'net_margin_ttm', 'debt_to_equity_fq', 'dividends_yield_current', 'sector'];
+    const q = {}, pend = new Set();
+    let timer = null;
+    function want() {
+      document.querySelectorAll('[data-fund]').forEach(e => { if (!(e.dataset.fund in q)) pend.add(e.dataset.fund); });
+      if (pend.size) { clearTimeout(timer); timer = setTimeout(load, 150); }
+      paint();
+    }
+    async function load() {
+      const list = [...pend]; pend.clear();
+      for (let i = 0; i < list.length; i += 300) {
+        const part = list.slice(i, i + 300);
+        try {
+          const res = await fetch(URL_SCAN, { method: 'POST', body: JSON.stringify({ symbols: { tickers: part }, columns: COLS }) });
+          const js = await res.json();
+          for (const r of js.data || []) { const d = r.d; q[r.s] = { mc: d[0], pe: d[1], epsg: d[2], revg: d[3], nm: d[4], de: d[5], dy: d[6], sec: d[7] }; }
+          part.forEach(k => { if (!(k in q)) q[k] = null; });
+        } catch (e) { /* try again next time */ }
+      }
+      paint();
+    }
+    // five plain yes/no checks; missing numbers are skipped, not counted as bad
+    function checks(f) {
+      const out = [];
+      if (f.revg != null) out.push({ ok: f.revg > 0, text: f.revg > 0 ? `Sales up ${f.revg.toFixed(0)}% in a year` : `Sales down ${Math.abs(f.revg).toFixed(0)}% in a year`, id: 'revenue-growth' });
+      if (f.nm != null) out.push({ ok: f.nm > 0, text: f.nm > 0 ? `Profitable: keeps ${f.nm.toFixed(0)}% of sales as profit` : 'Losing money', id: 'profit-margin' });
+      if (f.epsg != null) out.push({ ok: f.epsg > 0, text: f.epsg > 0 ? `Profit per share up ${f.epsg.toFixed(0)}% in a year` : `Profit per share down ${Math.abs(f.epsg).toFixed(0)}%`, id: 'eps' });
+      if (f.de != null) out.push({ ok: f.de < 1.5, text: f.de < 0.5 ? `Low debt (${f.de.toFixed(2)}× equity)` : f.de < 1.5 ? `Moderate debt (${f.de.toFixed(2)}× equity)` : `High debt (${f.de.toFixed(1)}× equity)`, id: 'debt-to-equity' });
+      if (f.pe != null && f.pe > 0) out.push({ ok: f.pe <= 35, text: f.pe <= 15 ? `Cheap vs profit (P/E ${f.pe.toFixed(0)})` : f.pe <= 35 ? `Fair price vs profit (P/E ${f.pe.toFixed(0)})` : `Expensive vs profit (P/E ${f.pe.toFixed(0)})`, id: 'pe-ratio' });
+      return out;
+    }
+    function chips(f) {
+      const c = checks(f);
+      if (!c.length) return '';
+      const ok = c.filter(x => x.ok).length;
+      return `<span class="chip ${ok / c.length >= 0.7 ? 'g' : ok / c.length < 0.45 ? 'r' : 'y'}" title="${esc(c.map(x => (x.ok ? '✓ ' : '✗ ') + x.text).join('\n'))}">Company health ${ok}/${c.length}</span>`
+        + c.slice(0, 3).map(x => `<span class="chip ${x.ok ? '' : 'y'}">${esc(x.text)}</span>`).join('') + (f.dy ? `<span class="chip">Dividend ${f.dy.toFixed(1)}% a year</span>` : '');
+    }
+    function paint() {
+      document.querySelectorAll('[data-fund]').forEach(e => { const f = q[e.dataset.fund]; if (f === undefined || e.dataset.done === '1') return; e.innerHTML = f ? chips(f) : ''; e.dataset.done = '1'; e.style.display = 'contents'; });
+    }
+    return { want, q, checks, loadNow: async t => { if (!(t in q)) { pend.add(t); await load(); } return q[t]; } };
+  })();
   function decimalsOf(p) { return p >= 1000 ? 2 : p >= 10 ? 2 : p >= 1 ? 4 : 6; }
 
   // ---------------------------------------------------------------- instrument view
@@ -578,12 +885,130 @@
     return { t: ts, o: O.map(v => v / k), h: H.map(v => v / k), l: L.map(v => v / k), c: C.map(v => v / k), v: z.v, dp: t.dp };
   }
 
+  // ---------------------------------------------------------------- instrument extras
+  function noDataView(row) {
+    const lt = tvLive(row.x), sym = isTV() ? (tvSym(row.x) || row.x) : row.x;
+    $('#view').innerHTML = `
+      <button class="back" onclick="history.length > 1 ? history.back() : (location.hash = '${S.back}')">← Back</button>
+      <div class="ihead"><div><h2>${esc(row.n)}</h2><div class="faint" style="font-size:13px">${metaLine(row)}</div></div>
+        <div ${lt ? `data-live="${esc(lt)}"` : ''}><span class="big num lp">–</span> <span class="lc num"></span><div class="faint lnote" style="font-size:12.5px">${lt ? 'Waiting for live price…' : ''}</div></div>
+        <div class="spacer"></div>
+        <div class="symbox"><span class="faint" style="font-size:13px">${isTV() ? 'TradingView' : 'XTB'} symbol</span> <b>${esc(sym)}</b>
+          <a class="copy" href="${tvLink(row.x)}" target="_blank" rel="noopener">Open in TradingView ↗</a></div></div>
+      <div class="card" style="margin-bottom:12px"><b>No price history from our data source (Yahoo Finance) for this one yet.</b>
+        <div class="note" style="font-size:13.5px">So there are no signals or odds for it. Usually it is newly listed, renamed, delisted, or listed under a different code. The scanner tries other codes once a week.
+        You can still check it in the XTB app${lt ? ' and on the live TradingView chart below' : ''}.</div></div>
+      ${tvSym(row.x) ? '<div class="tvbox" id="tvchart"></div>' : ''}`;
+    if (tvSym(row.x)) tvWidget($('#tvchart'), row.x, '1d');
+    Live.paint(); Live.poll();
+  }
+
+  function decisionStrip(row) {
+    if (!row || !hasData(row)) return '';
+    const parts = [];
+    if (tradable(row)) {
+      if (S.odds && S.odds.rows && S.odds.rows[row.x]) parts.push(['CFD · hours', decide(row, 'h')]);
+      parts.push(['CFD · days to weeks', decide(row, 'days')]);
+    }
+    if (isStockLike(row) && (isTV() || row.real)) parts.push(['Investing · months', decide(row, 'inv')]);
+    return `<div class="dstrip">${parts.map(([l, dec]) => `<div class="dbox ${dec.word}"><span class="faint">${l}</span><div>${decBadge(dec, l.startsWith('Investing') ? 'inv' : 'x')}</div></div>`).join('')}
+      <a class="dl dhow" href="#/dict/probability">How is this decided?</a></div>`;
+  }
+
+  function oddsCard(row) {
+    if (!row || !row.d.od) return '';
+    const e1 = dailyEval(row, 'buy', [0, 1, 2], WIN_MIN), e2 = dailyEval(row, 'sell', [0, 1, 2], WIN_MIN);
+    const line = (e, buy) => e.cells.map(c => !c ? '<td class="faint">–</td>' : `<td><b class="${c.p >= WIN_MIN && c.p > (c.base || 0) && c.fav > 0 ? (buy ? 'up' : 'down') : ''}">${Math.round(c.p)}%</b> <span class="faint">(normal ${Math.round(c.base)}%)</span></td>`).join('');
+    return `<div class="card"><h3>The last times it looked like this <small>Daily chart, all history</small></h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"><span class="faint" style="font-size:12.5px">Today:</span>${lookTextD(row.d.od.L)}</div>
+      <table class="otab"><thead><tr class="faint"><td></td><td>1 week</td><td>1 month</td><td>3 months</td></tr></thead>
+        <tbody><tr><td class="up">▲ Rose</td>${line(e1, true)}</tr><tr><td class="down">▼ Fell</td>${line(e2, false)}</tr></tbody></table>
+      <div class="note">Out of ${e1.n} past days that looked like today. Coloured = at least ${WIN_MIN} in 100, more often than normal, and gained on average. Normal = what price did after any day.</div></div>`;
+  }
+
+  function healthCard(row) {
+    if (!row || row.ty !== 'Stocks' || !tvLive(row.x)) return '';
+    const lt = tvLive(row.x);
+    setTimeout(async () => {
+      const f = await Fund.loadNow(lt), box = $('#health');
+      if (!box) return;
+      const c = f ? Fund.checks(f) : [];
+      if (!c.length) { box.innerHTML = '<p class="faint">No company figures available for this one.</p>'; return; }
+      const ok = c.filter(x => x.ok).length;
+      box.classList.remove('faint');
+      box.innerHTML = `<div class="bigscore"><div><span class="muted">Checks passed</span><b class="num ${ok / c.length >= 0.7 ? 'up' : ok / c.length < 0.45 ? 'down' : 'warn'}">${ok} / ${c.length}</b></div>
+          <div><span class="muted">Company value</span><b class="num">${f.mc ? money(f.mc) : '–'}</b></div></div>
+        <ul class="checks">${c.map(x => `<li><span class="ic">${x.ok ? '✅' : '⚠️'}</span><span>${esc(x.text)}</span><a class="pts dl" href="#/dict/${x.id}">what is this?</a></li>`).join('')}
+          ${f.dy ? `<li><span class="ic">💵</span><span>Pays a dividend of about ${f.dy.toFixed(1)}% a year</span></li>` : ''}${f.sec ? `<li><span class="ic">🏷️</span><span>Sector: ${esc(f.sec)}</span></li>` : ''}</ul>`;
+    }, 0);
+    return `<div class="card"><h3>Company health <small>latest yearly figures, from TradingView</small></h3><div id="health" class="faint">Loading…</div>
+      <div class="note">The trend and odds come from the price only. These checks look at the business itself. A good business can still have a falling price, and the other way round.</div></div>`;
+  }
+
+  // Plan a trade: how big a position so that hitting the stop loses only the chosen % of the account
+  function planCard(row, price, tf) {
+    if (!row || !hasData(row)) return '';
+    const p = store.get('plan', { bal: 1000, risk: 1 });
+    // a starting stop: the odds' stop for this holding time if there is one, else 1.5 average candles
+    const dec = decide(row, tf === '1h' || tf === '15m' || tf === '4h' ? 'h' : 'days');
+    const fromOdds = !!(dec.c && dec.c.stop);
+    const stopPct = fromOdds ? dec.c.stop : Math.max(0.1, (row.d.atrp || 1) * 1.5);
+    const side = dec.word === 'sell' ? 'sell' : 'buy';
+    const dp = decimalsOf(price);
+    const stop = side === 'buy' ? price * (1 - stopPct / 100) : price * (1 + stopPct / 100);
+    const target = side === 'buy' ? price + 2 * (price - stop) : price - 2 * (stop - price);
+    return `<div class="card plan" style="grid-column:1/-1"><h3>Plan a trade <small>how big, and where to get out</small></h3>
+      <div class="pgrid">
+        <label>Side<select id="pSide"><option value="buy" ${side === 'buy' ? 'selected' : ''}>▲ Buy</option><option value="sell" ${side === 'sell' ? 'selected' : ''}>▼ Sell (CFD)</option></select></label>
+        <label>My account (${esc(row.cur || 'same currency')})<input id="pBal" type="number" min="0" step="any" value="${p.bal}"></label>
+        <label>Risk per trade (%)<input id="pRisk" type="number" min="0.1" max="10" step="0.1" value="${p.risk}"></label>
+        <label>Entry price<input id="pEntry" type="number" step="any" value="${price.toFixed(dp)}"></label>
+        <label>Stop loss<input id="pStop" type="number" step="any" value="${stop.toFixed(dp)}"></label>
+        <label>Take profit<input id="pTarget" type="number" step="any" value="${target.toFixed(dp)}"></label>
+      </div>
+      <div id="pOut" class="pout"></div>
+      <div class="note">Starting stop = ${fromOdds ? `the odds' stop (8 of 10 past times never went that far against you, ${dec.c.short})` : '1.5 average candles away'}; take profit = 2× the stop distance. Change any box.
+        In XTB the size is set in <b>lots</b>: check the lot size in the app (stock CFDs are usually 1 share per lot, forex 100,000 units, gold 100 ounces). If your account is in another currency, convert first. ${dl('position-size', 'Why size this way?')}</div></div>`;
+  }
+
+  function wirePlan() {
+    if (!$('#pOut')) return;
+    const calc = () => {
+      const side = $('#pSide').value, bal = +$('#pBal').value, risk = +$('#pRisk').value, e = +$('#pEntry').value, s = +$('#pStop').value, t = +$('#pTarget').value;
+      store.set('plan', { bal, risk });
+      const per = side === 'buy' ? e - s : s - e, gain = side === 'buy' ? t - e : e - t;
+      if (!(bal > 0 && risk > 0 && e > 0 && per > 0)) {
+        $('#pOut').innerHTML = `<span class="warn">${per <= 0 && e > 0 ? `For a ${side} the stop loss must be ${side === 'buy' ? 'below' : 'above'} the entry price.` : 'Fill in every box.'}</span>`;
+        return;
+      }
+      const atRisk = bal * risk / 100, units = atRisk / per, value = units * e, rr = gain / per, dp = decimalsOf(e);
+      const f = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      $('#pOut').innerHTML = `<div class="bigscore">
+          <div><span class="muted">Size</span><b class="num">${units >= 100 ? f(Math.floor(units)) : +units.toPrecision(3)}</b><span class="faint" style="font-size:12px">units (shares, coins, ounces…)</span></div>
+          <div><span class="muted">Position value</span><b class="num">${f(value)}</b><span class="faint" style="font-size:12px">${value > bal ? `${(value / bal).toFixed(1)}× your account: needs leverage` : 'no leverage needed'}</span></div></div>
+        <ul class="checks">
+          <li><span class="ic">🛑</span><span>If the stop is hit you lose about <b class="down">${f(atRisk)}</b> (${risk}% of your account), plus spread and fees.</span></li>
+          <li><span class="ic">🎯</span><span>If take profit is hit you gain about <b class="up">${gain > 0 ? f(units * gain) : '–'}</b>.</span></li>
+          <li><span class="ic">⚖️</span><span>Reward : risk = <b class="${rr >= 1.5 ? 'up' : 'warn'}">${gain > 0 ? rr.toFixed(1) : '–'} : 1</b>${gain > 0 && rr < 1.5 ? ' (many traders skip trades under 1.5 : 1)' : ''}. Stop ${chartFmt(s, dp)} · entry ${chartFmt(e, dp)} · target ${chartFmt(t, dp)}</span></li>
+        </ul>`;
+    };
+    $('#pSide').onchange = () => {
+      // mirror the stop and target to the other side of the entry
+      const e = +$('#pEntry').value, s = +$('#pStop').value, t = +$('#pTarget').value;
+      $('#pStop').value = (2 * e - s).toFixed(decimalsOf(e)); $('#pTarget').value = (2 * e - t).toFixed(decimalsOf(e));
+      calc();
+    };
+    ['pBal', 'pRisk', 'pEntry', 'pStop', 'pTarget'].forEach(id => { $('#' + id).oninput = calc; });
+    calc();
+  }
+
   async function viewInstrument(x, tf) {
     navTabs(null);
     const row = S.summary.rows.find(r => r.x === x);
     $('#view').innerHTML = '<div class="empty">Loading chart…</div>';
     let det;
-    try { det = await loadDetail(x); } catch (e) { $('#view').innerHTML = `<div class="empty">No chart data for ${esc(x)} yet.</div>`; return; }
+    if (row && !hasData(row)) return noDataView(row);
+    try { det = await loadDetail(x); } catch (e) { if (row) return noDataView(row); $('#view').innerHTML = `<div class="empty">No chart data for ${esc(x)} yet.</div>`; return; }
     const tfs = TF_ORDER.filter(k => det.tf[k]);
     if (!det.tf[tf]) tf = tfs.includes('1d') ? '1d' : tfs[0];
     const T = det.tf[tf], m = det.meta, d = decode(T), study = T.study;
@@ -595,7 +1020,7 @@
     d.levels = { sup: T.levels.sup, res: T.levels.res };
 
     $('#view').innerHTML = `
-      <button class="back" onclick="history.length > 1 ? history.back() : (location.hash = '${S.back}')">← Back to list</button>
+      <button class="back" onclick="history.length > 1 ? history.back() : (location.hash = '${S.back}')">← Back</button>
       <div class="ihead">
         <div><h2>${esc(m.name)}</h2>
           <div class="faint" style="font-size:13px">${esc(m.type)} · ${esc(m.market)} · ${[m.cfd ? 'CFD' : '', m.real ? 'Real shares' : ''].filter(Boolean).join(' · ')}</div></div>
@@ -605,6 +1030,7 @@
         <div class="symbox"><span class="faint" style="font-size:13px">${isTV() ? 'TradingView' : 'XTB'} symbol</span> <b>${esc(sym)}</b> <button class="copy" id="copy">Copy</button>
           <a class="copy" href="${tvLink(x)}" target="_blank" rel="noopener">Open in TradingView ↗</a></div>
       </div>
+      ${decisionStrip(row)}
       ${lt ? `<div class="rating" data-rec="${esc(lt)}"></div>` : ''}
       <div class="chartbar"><div class="tfs">${TF_ORDER.map(k => `<button data-tf="${k}" class="${k === tf ? 'on' : ''}" ${det.tf[k] ? '' : 'disabled title="Only for the fast-watch list"'}>${tfShort(k)}</button>`).join('')}</div>
         <div class="seg kind" role="group" aria-label="Chart type"><button data-kind="ours" class="${kind === 'ours' ? 'on' : ''}">Pattern chart</button><button data-kind="tv" class="${kind === 'tv' ? 'on' : ''}">Live TradingView chart</button></div></div>
@@ -615,7 +1041,10 @@
         <span class="up">▲ bullish pattern</span><span class="down">▼ bearish pattern</span><span>Drag to move · scroll / pinch to zoom · tap a marked candle</span></div>
       <div id="picked"></div>
       <div class="grid2">
+        ${planCard(row, price, tf)}
         ${studyCard(study, T)}
+        ${oddsCard(row)}
+        ${healthCard(row)}
         ${scoreCard(T)}
         ${pastCard(T, tf)}
         ${T.inv || det.tf['1d']?.inv ? investCard(T.inv || det.tf['1d'].inv) : ''}
@@ -632,6 +1061,7 @@
     if (kind === 'tv') tvWidget($('#tvchart'), x, tf);
     Live.paint(); Live.poll();
     document.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { if (!b.disabled) location.hash = `#/i/${encodeURIComponent(x)}/${b.dataset.tf}`; });
+    wirePlan();
     S.chart = new CandleChart($('#chart'), { onMark: (i, ms) => showPicked(ms, T, tf) });
     S.chart.setData(d);
   }
@@ -676,7 +1106,7 @@
   function scoreCard(T) {
     const li = parts => parts.map(p => `<li><span class="ic">${p.ok ? '✅' : p.penalty ? '⚠️' : '▫️'}</span><span class="${p.ok ? '' : 'faint'}">${esc(p.text)}</span><span class="pts">${p.pts > 0 ? '+' : ''}${p.pts}</span></li>`).join('');
     const b = T.bull[T.bull.length - (T.closed ? 1 : 2)], s = T.bear[T.bear.length - (T.closed ? 1 : 2)];
-    return `<div class="card"><h3>Setup score <small>0–100, alerts at 70+</small></h3>
+    return `<div class="card"><h3>Signal score <small>0–100, alerts at 70+ · ${dl('signal-score', 'what is this?')}</small></h3>
       <div class="bigscore"><div><span class="up">▲ Buy side</span><b class="up num">${b ?? '–'}</b></div><div><span class="down">▼ Sell side</span><b class="down num">${s ?? '–'}</b></div></div>
       <details open><summary class="muted" style="cursor:pointer">Why (buy side)</summary><ul class="checks" style="margin-top:8px">${li(T.parts.bull)}</ul></details>
       <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">Why (sell side)</summary><ul class="checks" style="margin-top:8px">${li(T.parts.bear)}</ul></details></div>`;
@@ -689,15 +1119,15 @@
       return `<p><b class="${side === 'buy' ? 'up' : 'down'}">${side === 'buy' ? '▲ Buy' : '▼ Sell'} signal</b> fired <b>${bt.n}</b> times. ${bt.horizon} candles later price was ${w} <b>${bt.win}%</b> of the time
         (any random candle: ${bt.base_win}%). Average move in the signal's favour: <b>${pct(bt.avg, 2)}</b>.<br><i>${esc(bt.grade)}</i></p>`;
     };
-    return `<div class="card"><h3>Past record <small>${TF_LABEL[tf]} chart, this instrument</small></h3>${one(T.bt.bull, 'buy')}${one(T.bt.bear, 'sell')}
+    return `<div class="card"><h3>How the signal did before <small>${TF_LABEL[tf]} chart, this instrument</small></h3>${one(T.bt.bull, 'buy')}${one(T.bt.bear, 'sell')}
       <div class="note">"Normal" is what happened on every candle, so a signal is only useful if it beats it. Fewer than 15 examples = too few to judge.</div></div>`;
   }
 
   function investCard(v) {
-    return `<div class="card"><h3>Long-term score <small>for investing (months–years)</small></h3>
+    return `<div class="card"><h3>Long-term trend score <small>for investing (months–years)</small></h3>
       <div class="bigscore"><div><span class="muted">Score</span><b class="num ${v.score >= 70 ? 'up' : v.score <= 30 ? 'down' : ''}">${v.score}</b></div><div><span class="muted">12 months</span><b class="num ${v.ret12m >= 0 ? 'up' : 'down'}">${pct(v.ret12m)}</b></div></div>
       ${v.parts ? `<ul class="checks">${v.parts.map(p => `<li><span class="ic">${p.ok ? '✅' : '▫️'}</span><span class="${p.ok ? '' : 'faint'}">${esc(p.text)}</span><span class="pts">+${p.pts}</span></li>`).join('')}</ul>` : ''}
-      <div class="note">Price trend only. Company results (earnings, revenue, debt) come in a later update.</div></div>`;
+      <div class="note">Price trend only. For the business itself see Company health.</div></div>`;
   }
 
   function patternStatsCard(T, tf) {

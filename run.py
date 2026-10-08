@@ -17,7 +17,7 @@ import pandas as pd
 
 from engine import alerts, odds, store
 from engine.analyze import analyze, pool_outcomes
-from engine.data import fix_forex_daily, is_forex, resample
+from engine.data import fix_forex_daily, is_forex, last_closed_index, resample
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(ROOT, "state")
@@ -129,6 +129,12 @@ def load_universe(limit=None):
     for u in uni:
         if u["xtb"] in fixed and u["type"] not in ("Stocks", "ETFs"):
             u["yahoo"] = fixed[u["xtb"]]
+    # symbols found by scripts/fix_missing.py when the first guess returned no data
+    # (e.g. Aker ASA is AKER.OL, not AKE-R.OL)
+    fixes = read_json(os.path.join(STATE, "yahoo_fix.json"), {})
+    for u in uni:
+        if fixes.get(u["xtb"]):
+            u["yahoo"] = fixes[u["xtb"]]
     if limit:
         # small test sample: keep every non-stock + the first N stocks/ETFs
         others = [u for u in uni if u["type"] not in ("Stocks", "ETFs")]
@@ -139,6 +145,64 @@ def load_universe(limit=None):
 
 def meta_of(u):
     return {k: u.get(k) for k in ("xtb", "yahoo", "name", "type", "market", "currency", "cfd", "real", "tvonly")}
+
+
+# ---------------------------------------------------------------- summary file
+# The summary is ~9,000 rows, so repeated words are stored as small codes.
+# site/app.js unslim() reverses this. Rows are kept in full form in Python.
+GRADES = ["Too few examples to judge", "Historically reliable", "Slight edge (could be luck)", "No real edge"]
+BT_KEYS = ("b", "bn", "bg", "s", "sn", "sg", "base")
+
+
+def _slim_t(t):
+    if not t:
+        return t
+    t = dict(t)
+    bt = t.get("bt")
+    if isinstance(bt, dict):
+        t["bt"] = [GRADES.index(bt[k]) if k in ("bg", "sg") and bt.get(k) in GRADES else bt.get(k) for k in BT_KEYS]
+    for k in ("nearS", "nearR"):
+        if not t.get(k):
+            t.pop(k, None)
+    return t
+
+
+def _fat_t(t):
+    if not t:
+        return t
+    bt = t.get("bt")
+    if isinstance(bt, list):
+        t["bt"] = {k: (GRADES[v] if k in ("bg", "sg") and isinstance(v, int) else v) for k, v in zip(BT_KEYS, bt)}
+    return t
+
+
+def write_summary(summary):
+    rows = []
+    for r in summary["rows"]:
+        r = dict(r)
+        r["d"] = _slim_t(r.get("d"))
+        if r.get("i"):
+            r["i"] = {k: _slim_t(v) for k, v in r["i"].items()}
+        for k in ("cfd", "real"):
+            r[k] = 1 if r.get(k) else 0
+        if r.get("y") == r["x"]:
+            r.pop("y")
+        rows.append(r)
+    write_json(os.path.join(SITE_DATA, "summary.json"), {**summary, "slim": 1, "rows": rows})
+
+
+def read_summary():
+    s = read_json(os.path.join(SITE_DATA, "summary.json"), {"rows": []})
+    for r in s.get("rows", []):
+        r["d"] = _fat_t(r.get("d") or {})
+        for v in (r.get("i") or {}).values():
+            _fat_t(v)
+        r.setdefault("y", r["x"])
+        for k in ("cfd", "real"):
+            if k in r:
+                r[k] = bool(r[k])
+    s.pop("slim", None)
+    return s
 
 
 # ---------------------------------------------------------------- full scan
@@ -165,16 +229,21 @@ def pick_slice(uni, max_n):
     return pool[:max_n]
 
 
-def run_full(limit=None, max_n=None):
+def run_full(limit=None, max_n=None, cache_only=False):
     t0 = time.time()
     uni_all = load_universe(limit)
     uni = pick_slice(uni_all, max_n) if max_n else uni_all
     log(f"daily scan: {len(uni)} of {len(uni_all)} instruments")
     tickers = sorted({u["yahoo"] for u in uni})
-    daily = store.update(STATE, "1d", tickers, log=log)
+    if cache_only:
+        # re-analyse everything from the saved history without asking Yahoo (after an engine change)
+        saved = store.load(STATE, "1d")
+        daily = {t: saved[t] for t in tickers if t in saved}
+    else:
+        daily = store.update(STATE, "1d", tickers, log=log)
     upd = read_json(os.path.join(STATE, "updated.json"), {})
     nodata = read_json(os.path.join(STATE, "nodata.json"), {})
-    for t in tickers:
+    for t in ([] if cache_only else tickers):
         if t in daily and (time.time() - daily[t].index[-1].timestamp()) < 10 * 86400:
             upd[t] = time.time()
             nodata.pop(t, None)
@@ -184,7 +253,11 @@ def run_full(limit=None, max_n=None):
     write_json(os.path.join(STATE, "nodata.json"), nodata)
     log(f"got data for {sum(t in daily for t in tickers)}/{len(tickers)}")
     fx = [t for t in tickers if is_forex(t)]
-    hourly_fx = store.update(STATE, "1h", fx, log=log) if fx else {}
+    if cache_only:
+        saved_h = store.load(STATE, "1h") if fx else {}
+        hourly_fx = {t: saved_h[t] for t in fx if t in saved_h}
+    else:
+        hourly_fx = store.update(STATE, "1h", fx, log=log) if fx else {}
 
     pooled_prev = read_json(os.path.join(STATE, "pooled.json"), {})
     collected = {"1d": [], "1wk": []}
@@ -207,6 +280,12 @@ def run_full(limit=None, max_n=None):
             continue
         if sd is None:
             continue
+        try:  # probability for today's daily look (every instrument)
+            o = odds.odds_daily(df, last_closed_index(df, "1d"), seven_day=u["type"] == "Crypto")
+            if o:
+                sd["od"] = o
+        except Exception as e:
+            log("daily odds skip", u["xtb"], repr(e)[:120])
         if od:
             collected["1d"].append(od)
         if ow:
@@ -228,14 +307,22 @@ def run_full(limit=None, max_n=None):
     write_json(os.path.join(STATE, "pooled.json"), merged_pooled)
 
     # merge this slice into the existing summary (rows from earlier slices stay)
-    old = {r["x"]: r for r in read_json(os.path.join(SITE_DATA, "summary.json"), {}).get("rows", [])}
+    old = {r["x"]: r for r in read_summary().get("rows", [])}
     valid = {u["xtb"] for u in uni_all}
     for r in rows:
         if r["x"] in old:
-            for k in ("i", "live"):
+            for k in ("i", "live"):  # intraday parts come from the fast scan
                 if k in old[r["x"]]:
                     r[k] = old[r["x"]][k]
         old[r["x"]] = r
+    # instruments with no price data yet still appear (search, live price, TradingView chart)
+    for u in uni_all:
+        if u["xtb"] not in old:
+            stub = {"x": u["xtb"], "y": u["yahoo"], "n": u["name"], "ty": u["type"], "m": u["market"],
+                    "cur": u.get("currency"), "cfd": u.get("cfd"), "real": u.get("real"), "nd": 1, "d": {}}
+            if u.get("tvonly"):
+                stub["tvo"] = 1
+            old[u["xtb"]] = stub
     all_rows = [r for x, r in old.items() if x in valid]
 
     alerts.process(rows, "1d", STATE, SITE_DATA, merged_pooled, log=log)
@@ -246,7 +333,7 @@ def run_full(limit=None, max_n=None):
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     summary = {"generated": now, "full_scan": now, "count": len(all_rows), "universe": len(uni_all),
                "fast": [f["xtb"] for f in fast], "rows": all_rows}
-    write_json(os.path.join(SITE_DATA, "summary.json"), summary)
+    write_summary(summary)
     write_json(os.path.join(SITE_DATA, "patterns.json"), merged_pooled)
     log(f"daily scan done: {len(rows)} analysed this run, {len(all_rows)} on the site, {time.time() - t0:.0f}s")
     return summary
@@ -270,7 +357,7 @@ def run_fast():
     if not fast:
         log("no fast list yet - run a full scan first")
         return None
-    summary = read_json(os.path.join(SITE_DATA, "summary.json"), {"rows": []})
+    summary = read_summary()
     by_x = {r["x"]: r for r in summary["rows"]}
     uni = {u["xtb"]: u for u in load_universe()}
     tickers = sorted({f["yahoo"] for f in fast})
@@ -334,7 +421,7 @@ def run_fast():
                {"generated": summary["generated"], "months": odds.MONTHS, "min_n": odds.MIN_N,
                 "spacing": odds.SPACING, "rows": odds_rows})
     log(f"odds for {len(odds_rows)} instruments")
-    write_json(os.path.join(SITE_DATA, "summary.json"), summary)
+    write_summary(summary)
     log(f"fast scan done in {time.time() - t0:.0f}s")
     return summary
 
@@ -346,8 +433,8 @@ if __name__ == "__main__":
         return int(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else None
 
     if mode == "full":
-        run_full(opt("--limit"), opt("--max"))
+        run_full(opt("--limit"), opt("--max"), "--cache-only" in sys.argv)
     elif mode == "fast":
         run_fast()
     else:
-        sys.exit("usage: python run.py full [--max N] [--limit N] | fast")
+        sys.exit("usage: python run.py full [--max N] [--limit N] [--cache-only] | fast")

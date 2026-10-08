@@ -146,3 +146,76 @@ def odds(h1, months=MONTHS):
 
     return {"look": int(lk_all[-1]), "dpd": dpd, "hz": hz, "n_hours": int(keep.sum()),
             "base": base, "st": st}
+
+
+# ---------------------------------------------------------------- daily odds (every instrument)
+# The same idea on DAILY candles, so every instrument gets a probability, not only the
+# fast-watch list. Today's look = 3 facts from the last CLOSED daily candle:
+#   1. price above or below its 50-day average
+#   2. price above or below its 200-day average
+#   3. RSI low (<40), middle (40-60) or high (>60)
+# -> 2 x 2 x 3 = 12 looks. We count what price did 1 week, 1 month and 3 months later
+# after every past day with the same look, using all the history we keep (up to ~8 years).
+# Only today's look is stored (a few numbers per instrument), so the browser cannot
+# re-check it live - it updates whenever the instrument is rescanned (a few times a day).
+D_SPACING = 3            # days between two counted days of the same look
+D_MIN_N = 25
+D_HZ = [5, 20, 60]       # trading days: about 1 week, 1 month, 3 months
+D_HZ_7DAY = [7, 30, 90]  # crypto trades every day
+
+
+def look_daily(above50, above200, rsi):
+    r = np.where(rsi < RSI_EDGES[0], 0, np.where(rsi > RSI_EDGES[1], 2, 1))
+    return np.asarray(above50, int) * 6 + np.asarray(above200, int) * 3 + r
+
+
+def odds_daily(df, last=None, seven_day=False):
+    """Daily candles -> odds for TODAY's look only, or None.
+
+    {"L": look, "sp": spacing, "hz": [5, 20, 60],
+     "b": [[% up, % down] after ANY day] per horizon,
+     "c": [[n, up, down, avg %, typical rise %, typical fall %, stop_buy %, stop_sell %] or None] per horizon}
+    `last` = index of the last closed candle (default: the last one).
+    """
+    if df is None or len(df) < 320:
+        return None
+    last = len(df) - 1 if last is None else last
+    ind = indicators(df)
+    c, hi, lo = df.Close.values, df.High.values, df.Low.values
+    lk = look_daily(c > ind.sma50.values, c > ind.sma200.values, ind.rsi.values)
+    lk[np.isnan(ind.sma200.values) | np.isnan(ind.rsi.values)] = -1
+    L = int(lk[last])
+    if L < 0:
+        return None
+    hz = D_HZ_7DAY if seven_day else D_HZ
+    n_all = last + 1
+    out_b, out_c = [], []
+    # past days with today's look, thinned, that have a full window after them (before `last`)
+    ids, prev = [], -10 ** 9
+    for i in range(n_all - 1):
+        if lk[i] == L and i - prev >= D_SPACING:
+            ids.append(i)
+            prev = i
+    for h in hz:
+        valid = np.arange(0, n_all - h)
+        if not len(valid):
+            return None
+        f_all = c[valid + h] / c[valid] - 1
+        out_b.append([round(float((f_all > 0).mean()) * 100, 1), round(float((f_all < 0).mean()) * 100, 1)])
+        sel = np.array([i for i in ids if i + h < n_all], int)
+        if len(sel) < D_MIN_N:
+            out_c.append(None)       # not enough past times for this horizon
+            continue
+        f = c[sel + h] / c[sel] - 1
+        win_lo = np.array([lo[i + 1:i + h + 1].min() for i in sel]) / c[sel] - 1
+        win_hi = np.array([hi[i + 1:i + h + 1].max() for i in sel]) / c[sel] - 1
+        out_c.append([len(sel), int((f > 0).sum()), int((f < 0).sum()), round(float(f.mean()) * 100, 2),
+                      _r2(_med(f[f > 0])), _r2(_med(f[f < 0])),
+                      _r2(_q(-win_lo, STOP_Q)), _r2(_q(win_hi, STOP_Q))])
+    if out_c[0] is None:
+        return None
+    return {"L": L, "sp": D_SPACING, "hz": hz, "b": out_b, "c": out_c}
+
+
+def _r2(v):
+    return None if v is None else round(v, 2)

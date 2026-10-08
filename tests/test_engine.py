@@ -213,6 +213,36 @@ def test_4h_average_matches_tradingview_style():
     assert abs(s4[i] - (prev.sum() + df.Close.iloc[i]) / 50) < 1e-9
 
 
+def test_daily_odds_match_brute_force():
+    """odds_daily counts = a plain loop over every past day with today's look."""
+    from engine.indicators import indicators
+    rng = np.random.default_rng(7)
+    n = 1500
+    c = 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.012, n)))
+    idx = pd.date_range("2019-01-01", periods=n, freq="B", tz="UTC")
+    df = pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1000}, index=idx)
+    o = odds.odds_daily(df)
+    ind = indicators(df)
+    lk = odds.look_daily(c > ind.sma50.values, c > ind.sma200.values, ind.rsi.values)
+    lk[np.isnan(ind.sma200.values) | np.isnan(ind.rsi.values)] = -1
+    assert o["L"] == lk[-1]
+    ids, prev = [], -10 ** 9
+    for i in range(n - 1):
+        if lk[i] == o["L"] and i - prev >= odds.D_SPACING:
+            ids.append(i)
+            prev = i
+    for k, h in enumerate(odds.D_HZ):
+        sel = [i for i in ids if i + h < n]
+        cell = o["c"][k]
+        if len(sel) < odds.D_MIN_N:
+            assert cell is None
+            continue
+        up = sum(c[i + h] > c[i] for i in sel)
+        assert cell[0] == len(sel) and cell[1] == up, (h, cell[:3], len(sel), up)
+        base_up = np.mean(c[h:] > c[:-h]) * 100
+        assert abs(o["b"][k][0] - base_up) < 0.11
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

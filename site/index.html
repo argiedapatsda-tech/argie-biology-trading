@@ -7,7 +7,7 @@
 <meta name="description" content="Rule-based signals, candle patterns and study notes for every instrument on XTB and Thai SET, with live prices.">
 <meta name="theme-color" content="#0b0f14">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0f14'/%3E%3Cpath d='M9 7v18M9 11h0' stroke='%23f0555a' stroke-width='2'/%3E%3Crect x='7' y='12' width='4' height='8' fill='%23f0555a'/%3E%3Cpath d='M16 5v20' stroke='%232ec27e' stroke-width='2'/%3E%3Crect x='14' y='8' width='4' height='10' fill='%232ec27e'/%3E%3Cpath d='M23 4v18' stroke='%232ec27e' stroke-width='2'/%3E%3Crect x='21' y='6' width='4' height='9' fill='%232ec27e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -15,7 +15,7 @@
   <h1>Argie Biology Trading</h1>
   <p class="tag">Signals, candle patterns and "what next" study notes for every instrument, explained in plain words. Pick the platform you use:</p>
   <div class="choices">
-    <button class="choice" data-mode="xtb"><h2>XTB</h2><p>Every stock, ETF, forex pair, commodity, index and crypto on XTB, with XTB symbol names.</p></button>
+    <button class="choice" data-mode="xtb"><h2>XTB</h2><p>Every stock, ETF, forex pair, commodity, index and crypto on XTB, split into CFD trading and investing, with XTB symbol names.</p></button>
     <button class="choice" data-mode="tv"><h2>TradingView</h2><p>The same signals plus about 900 Thai SET stocks, with TradingView symbols, live TradingView charts and watchlist export.</p></button>
   </div>
   <label class="remember"><input type="checkbox" id="remember" checked> Remember my choice</label>
@@ -32,14 +32,16 @@
       <button class="pill" id="modeSwitch" title="Switch between XTB and TradingView">Switch</button>
     </div>
     <nav class="tabs" id="tabs" aria-label="Sections"></nav>
+    <nav class="tabs sub hidden" id="subtabs" aria-label="Lists"></nav>
     <div class="tape" id="tape" aria-label="Live market prices"><div class="tape-in" id="tapeIn"></div></div>
   </header>
   <main id="view"></main>
-  <footer class="foot">Good for buying / selling now: each instrument's own last 6 months of 1H candles, with today's 4 facts re-checked live every 15 s and crypto prices every second from Binance. Signals: Yahoo Finance candles, rescanned about every 15 minutes (fast-watch list) and every few hours (everything else). Live prices: TradingView (crypto and forex in real time, most stock markets 15 min delayed). XTB's own CFD prices can differ slightly. Instrument list: XTB International specification tables + SET.<br>
+  <footer class="foot">BUY / SELL / WAIT: counted from each instrument's own past (Daily chart: all its history; hourly: the last 6 months of 1H candles, re-checked live every 15 s). Company health: TradingView. Crypto prices every second from Binance. Signals: Yahoo Finance candles, rescanned about every 15 minutes (fast-watch list) and every few hours (everything else). Live prices: TradingView (crypto and forex in real time, most stock markets 15 min delayed). XTB's own CFD prices can differ slightly. Instrument list: XTB International specification tables + SET.<br>
     For learning and research only - not financial advice. Rules are mechanical and every score shows its reasons. Past results do not guarantee future results.</footer>
 </div>
 
 <script src="chart.js?v=3"></script>
-<script src="app.js?v=5"></script>
+<script src="dict.js?v=1"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

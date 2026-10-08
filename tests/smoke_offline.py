@@ -62,10 +62,25 @@ def main():
         with open(os.path.join(run.STATE, "universe.json"), "w") as fh:
             json.dump(uni, fh)
 
+        real = lambda s: sum(1 for r in s["rows"] if not r.get("nd"))
         s1 = run.run_full(max_n=3)            # first slice
-        assert s1["count"] == 3, s1["count"]
+        assert real(s1) == 3 and s1["count"] == len(run.load_universe()), (real(s1), s1["count"])  # the rest are placeholders
         s2 = run.run_full(max_n=3)            # second slice picks the rest
-        assert s2["count"] == 5, s2["count"]  # BAD1 has no data
+        assert real(s2) == 5, real(s2)        # BAD1 has no data...
+        bad = [r for r in s2["rows"] if r["x"] == "BAD.US"][0]
+        assert bad.get("nd") == 1 and bad["d"] == {}, bad  # ...but still appears (search)
+        aaa = [r for r in s2["rows"] if r["x"] == "AAA.US"][0]
+        # today's look can be rare on one random series, so check that most rows got odds
+        with_od = [r for r in s2["rows"] if r["d"].get("od")]
+        assert len(with_od) >= 3, len(with_od)
+        od_d = with_od[0]["d"]["od"]
+        assert 0 <= od_d["L"] < 12 and len(od_d["c"]) == 3 and od_d["c"][0][0] >= 25, od_d
+        raw = json.load(open(os.path.join(run.SITE_DATA, "summary.json")))
+        assert raw["slim"] == 1 and isinstance([r for r in raw["rows"] if r["x"] == "AAA.US"][0]["d"]["bt"], list)
+        back = run.read_summary()
+        assert [r for r in back["rows"] if r["x"] == "AAA.US"][0]["d"]["bt"] == aaa["d"]["bt"]
+        s2b = run.run_full(max_n=50, cache_only=True)   # re-analyse from saved history, no downloads
+        assert real(s2b) == 5, real(s2b)
         nodata = json.load(open(os.path.join(run.STATE, "nodata.json")))
         assert "BAD1" in nodata
         s3 = run.run_fast()
