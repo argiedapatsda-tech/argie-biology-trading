@@ -169,14 +169,20 @@
   // ---------------------------------------------------------------- the BUY / SELL / WAIT word
   // Every row gets ONE word from probability: how often price went each way after past
   // moments that looked like today on the same instrument. BUY / SELL only when it went that way
-  // at least 60 times in 100, more often than normal, and gained on average.
+  // at least 60 times in 100, at least 5 more than normal, gained on average, and is unlikely to be luck.
   const WIN_MIN = 60;
+  const MARGIN = 5;   // must beat normal by at least 5 points: shares rise most of the time anyway
+  const Z_MIN = 1;
+  const MIN_MOVE = 0.5;  // % typical move on the Daily-chart odds, below this a win is too small to matter    // and be unlikely to be luck (about 5 in 6 sure, counting overlapping windows honestly)
   const INV_SELL_MIN = 55;  // shares drift up over months, so falling 55 times in 100 is already unusually bad
   // overlapping windows (a 3-month check every 3 days) are not independent, so the luck test
   // counts them as fewer times
   const nEff = (n, sp, h) => Math.max(1, n * Math.min(1, sp / h));
   const D_LABEL = ['1 week later', '1 month later', '3 months later'];
   const D_SHORT = ['about 1 week', 'about 1 month', 'about 3 months'];
+
+  // the one rule for BUY / SELL: often enough, clearly more often than normal, and gained on average
+  const strong = (p, base, minP, fav) => p >= minP && (base == null || p >= base + MARGIN) && fav > 0;
 
   function dailyEval(r, side, ks, minP) {
     const od = r.d && r.d.od;
@@ -188,8 +194,10 @@
       const base = od.b[k] ? od.b[k][buy ? 0 : 1] : null;
       return { k, n, wins, p, fav, base, z: luckZ(p, base, nEff(n, od.sp, od.hz[k])), label: D_LABEL[k], short: D_SHORT[k],
         typ: buy ? c[4] : c[5], stop: buy ? c[6] : c[7], worst: null,
-        good: ks.includes(k) && p >= minP && (base == null || p > base) && fav > 0 && (buy ? c[4] : c[5]) != null };
+        // cash-like funds (T-bill ETFs) rise almost every week by tiny amounts: nothing to trade
+        good: ks.includes(k) && strong(p, base, minP, fav) && (buy ? c[4] : c[5]) != null && Math.abs(buy ? c[4] : c[5]) >= MIN_MOVE };
     });
+    cells.forEach(x => { if (x && x.good && x.z < Z_MIN) x.good = false; });
     const best = cells.filter(x => x && x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
     return { src: 'd', L: od.L, cells, best, n: cells[0].n, live: false };
   }
@@ -359,7 +367,7 @@
     const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.z - a.z) || (b.str - a.str) || ((b.r.d.lq || 0) - (a.r.d.lq || 0));
     Object.values(groups).forEach(g => g.sort(order));
     const SEC = {
-      go: ['BUY or SELL now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, more often than normal. Strongest evidence first.`],
+      go: ['BUY or SELL now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
       lean: ['👀 Signals point one way, odds not there yet', 'warn', 'The chart signals lean up or down, but in the past this look did not win often enough. Watch, do not rush.'],
       wait: ['⏸ Wait', '', 'No clear edge: price went up and down about as often as normal. Most traders skip these.'],
       none: ['No data yet', 'faint', 'No price history from our data source yet (new, renamed or delisted). The live price and TradingView chart may still work.'],
@@ -460,7 +468,7 @@
       const h = st[k + 1], wins = side === 'buy' ? h[0] : h[1], p = wins / n * 100, fav = side === 'buy' ? h[2] : -h[2];
       const base = o.base[k] ? o.base[k][side === 'buy' ? 0 : 1] : null, z = luckZ(p, base, nEff(n, sp, o.hz[k]));
       return { k, n, wins, p, fav, base, z, label: hzLabel(o, k), short: hzShort(o, k),
-        good: ks.includes(k) && p >= WIN_MIN && (base == null || p > base) && fav > 0 && (side === 'buy' ? h[3] : h[4]) != null,
+        good: ks.includes(k) && strong(p, base, WIN_MIN, fav) && z >= Z_MIN && (side === 'buy' ? h[3] : h[4]) != null,
         typ: side === 'buy' ? h[3] : h[4], stop: side === 'buy' ? h[5] : h[6], worst: side === 'buy' ? h[7] : h[8] };
     });
     const best = cells.filter(x => x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
@@ -520,10 +528,10 @@
     if (hours) return `Right now each instrument's 1H chart is described by 4 simple facts (shown on each row). We look back over the <b>last ${S.odds.months} months</b> of the same instrument,
       find every hour with the same 4 facts, and count what price did <b>1 hour, 4 hours and 1 day later</b>. The facts are re-checked live every 15 seconds (crypto prices every second).
       Only the ${Object.keys(S.odds.rows).length} instruments on the fast-watch list have hourly odds.`
-      + ` Listed when price went your way <b>at least ${thr} times in 100</b>, more often than ${dl('base-rate', 'normal')}, and ${buy ? 'rose' : 'fell'} on average. Best evidence at the top.`;
+      + ` Listed when price went your way <b>at least ${thr} times in 100</b>, at least ${MARGIN} more than ${dl('base-rate', 'normal')}, ${buy ? 'rose' : 'fell'} on average, and ${dl('luck-test', 'is unlikely to be luck')}. Best evidence at the top.`;
     return `Today each instrument's <b>Daily chart</b> is described by 3 simple facts (above or below its 50-day and 200-day averages, and its ${dl('rsi', 'RSI')}). We look back over <b>all its history (up to about 8 years)</b>,
       find every day with the same 3 facts, and count what price did <b>1 week, 1 month and 3 months later</b>. ${inv ? 'Investing looks at 1 and 3 months.' : 'CFD trading looks at 1 week and 1 month.'}
-      Listed when price went your way <b>at least ${thr} times in 100</b>, more often than ${dl('base-rate', 'normal')}, and ${buy ? 'rose' : 'fell'} on average. Best evidence at the top.
+      Listed when price went your way <b>at least ${thr} times in 100</b>, at least ${MARGIN} more than ${dl('base-rate', 'normal')}, ${buy ? 'rose' : 'fell'} on average, and ${dl('luck-test', 'is unlikely to be luck')}. Best evidence at the top.
       The facts update each time the instrument is rescanned (a few times a day).`;
   }
 
@@ -918,12 +926,12 @@
   function oddsCard(row) {
     if (!row || !row.d.od) return '';
     const e1 = dailyEval(row, 'buy', [0, 1, 2], WIN_MIN), e2 = dailyEval(row, 'sell', [0, 1, 2], WIN_MIN);
-    const line = (e, buy) => e.cells.map(c => !c ? '<td class="faint">–</td>' : `<td><b class="${c.p >= WIN_MIN && c.p > (c.base || 0) && c.fav > 0 ? (buy ? 'up' : 'down') : ''}">${Math.round(c.p)}%</b> <span class="faint">(normal ${Math.round(c.base)}%)</span></td>`).join('');
+    const line = (e, buy) => e.cells.map(c => !c ? '<td class="faint">–</td>' : `<td><b class="${c.good ? (buy ? 'up' : 'down') : ''}">${Math.round(c.p)}%</b> <span class="faint">(normal ${Math.round(c.base)}%)</span></td>`).join('');
     return `<div class="card"><h3>The last times it looked like this <small>Daily chart, all history</small></h3>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"><span class="faint" style="font-size:12.5px">Today:</span>${lookTextD(row.d.od.L)}</div>
       <table class="otab"><thead><tr class="faint"><td></td><td>1 week</td><td>1 month</td><td>3 months</td></tr></thead>
         <tbody><tr><td class="up">▲ Rose</td>${line(e1, true)}</tr><tr><td class="down">▼ Fell</td>${line(e2, false)}</tr></tbody></table>
-      <div class="note">Out of ${e1.n} past days that looked like today. Coloured = at least ${WIN_MIN} in 100, more often than normal, and gained on average. Normal = what price did after any day.</div></div>`;
+      <div class="note">Out of ${e1.n} past days that looked like today. Coloured = at least ${WIN_MIN} in 100, at least ${MARGIN} more than normal, and gained on average. Normal = what price did after any day.</div></div>`;
   }
 
   function healthCard(row) {

@@ -4,8 +4,8 @@ window.DICT = [
   // ------------------------------------------------ this site
   { id: 'probability', cat: 'This site', term: 'BUY / SELL / WAIT (probability)', aka: 'the word on every row',
     plain: 'The word on each row comes from counting: after past moments that looked like today on the same instrument, how often did the price go up, and how often down?',
-    more: 'Today is described by a few simple facts (for example: price above its 50-day average, RSI in the middle). We find every past moment with the same facts and count what happened next. <b>BUY</b> = it rose at least 60 times in 100, more often than normal, and gained on average. <b>SELL</b> = the same for falls. <b>WAIT</b> = no clear edge. It is a count of the past, not a forecast, and the past can stop repeating.',
-    ex: 'Gold today is above both averages with RSI 65. Of the 140 past days that looked like this, gold was higher one month later 92 times (66%). On a normal day it was higher 54% of the time. 66% beats 60% and beats normal, so the row says BUY.',
+    more: 'Today is described by a few simple facts (for example: price above its 50-day average, RSI in the middle). We find every past moment with the same facts and count what happened next. <b>BUY</b> = it rose at least 60 times in 100, at least 5 more than on a normal day, gained on average, and passes a luck check. <b>SELL</b> = the same for falls. <b>WAIT</b> = no clear edge. It is a count of the past, not a forecast, and the past can stop repeating.',
+    ex: 'Gold today is above both averages with RSI 65. For example: of 140 past days that looked like this, gold was higher one month later 92 times (66%). On a normal day it was higher 54% of the time. 66% is above 60, 12 points above normal, and too many times to be luck, so the row says BUY.',
     see: ['base-rate', 'luck-test', 'sample-size'] },
   { id: 'base-rate', cat: 'This site', term: 'Normal (base rate)', aka: 'what usually happens',
     plain: 'How often price went up (or down) after ANY moment, whatever the chart looked like.',
