@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from engine.data import fix_forex_daily, last_closed_index  # noqa: E402
 from engine.patterns import detect_patterns  # noqa: E402
 from engine.study import _status  # noqa: E402
+from engine import odds  # noqa: E402
 
 
 def frame(rows):
@@ -135,6 +136,81 @@ def test_status_walk():
     assert _status(closes, 1, 2, 11, 9.5, True) == "waiting"
     assert _status(np.array([10, 10, 9.4, 12]), 1, 3, 11, 9.5, True) == "cancelled"
     assert _status(np.array([10, 10, 11.5, 9.0]), 1, 3, 11, 9.5, True) == "failed"
+
+
+def _hourly(n=6000, seed=1):
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range(end="2026-10-01", periods=n, freq="h", tz="UTC")
+    c = 100 * np.exp(np.cumsum(rng.normal(0, 0.004, n)))
+    o = np.r_[c[0], c[:-1]]
+    hi, lo = np.maximum(o, c) * 1.002, np.minimum(o, c) * 0.998
+    return pd.DataFrame({"Open": o, "High": hi, "Low": lo, "Close": c, "Volume": 0}, index=idx)
+
+
+def test_look_index_covers_24_looks():
+    seen = set()
+    for a in (0, 1):
+        for b in (0, 1):
+            for r in (30, 50, 70):
+                for m in (0, 1):
+                    L = int(odds.look_index(a, b, r, m))
+                    d = odds.describe(L)
+                    assert d["above1h"] == bool(a) and d["above4h"] == bool(b) and d["macd_up"] == bool(m)
+                    assert d["rsi"] == {30: "low", 50: "middle", 70: "high"}[r]
+                    seen.add(L)
+    assert seen == set(range(24))
+    assert int(odds.look_index(1, 1, 40, 1)) == int(odds.look_index(1, 1, 60, 1))  # 40 and 60 are "middle"
+
+
+def test_odds_counts_match_brute_force():
+    """Recount one look by hand: spacing, 6-month window, up/down/flat and the stop distance."""
+    df = _hourly()
+    o = odds.odds(df)
+    assert o and o["hz"] == [1, 4, 24] and o["st"]
+    lk = odds.looks(df)
+    start = df.index[-1] - pd.DateOffset(months=6)
+    L = max(o["st"], key=lambda k: o["st"][k][0])
+    c, lo = df.Close.values, df.Low.values
+    ids, last = [], -10 ** 9
+    for i in range(len(df)):
+        if df.index[i] < start or lk[i] != int(L) or i + 24 >= len(df):
+            continue
+        if i - last >= odds.SPACING:
+            ids.append(i)
+            last = i
+    n, h4 = o["st"][L][0], o["st"][L][2]
+    assert n == len(ids), (n, len(ids))
+    assert min(np.diff(ids)) >= odds.SPACING
+    f = np.array([c[i + 4] / c[i] - 1 for i in ids])
+    assert h4[0] == (f > 0).sum() and h4[1] == (f < 0).sum()
+    dd = np.array([-(lo[i + 1:i + 5].min() / c[i] - 1) for i in ids])
+    assert abs(h4[5] - np.quantile(dd, 0.8) * 100) < 1e-3, (h4[5], np.quantile(dd, 0.8) * 100)
+    assert abs(h4[7] - dd.max() * 100) < 1e-3
+
+
+def test_odds_today_look_and_rare_looks_hidden():
+    df = _hourly()
+    o = odds.odds(df)
+    assert o["look"] == int(odds.looks(df)[-1])
+    assert all(v[0] >= odds.MIN_N for v in o["st"].values())
+    assert odds.odds(_hourly(300)) is None          # too little history
+
+
+def test_stock_hours_give_shorter_day():
+    df = _hourly()
+    df = df[(df.index.hour >= 14) & (df.index.hour <= 20) & (df.index.dayofweek < 5)]  # 7 candles a day
+    assert odds.candles_per_day(df) == 7
+
+
+def test_4h_average_matches_tradingview_style():
+    """During a 4H candle the average = 49 finished 4H closes + this hour's close, / 50."""
+    df = _hourly(2000)
+    s4 = odds._sma50_4h(df)
+    i = 1500
+    b = df.index[i].floor("4h")
+    c4 = df.Close.resample("4h").last()
+    prev = c4[c4.index < b].iloc[-49:]
+    assert abs(s4[i] - (prev.sum() + df.Close.iloc[i]) / 50) < 1e-9
 
 
 if __name__ == "__main__":

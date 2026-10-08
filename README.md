@@ -20,6 +20,7 @@ It is not advice to buy or sell, and past results do not guarantee future ones.
 | `engine/levels.py` | Support / resistance from swing highs and lows |
 | `engine/backtest.py` | "How did this signal do in the past?" compared with a normal candle; refuses to call anything reliable unless it clearly beats luck |
 | `engine/study.py` | If/then scenarios with confirmation and "wrong if" prices, and their current status |
+| `engine/odds.py` | "Good for buying / selling now": describes every hour of the last 6 months by 4 facts (1H and 4H price vs 50-average, 1H RSI band, 1H MACD vs signal) and counts what price did 1h / 4h / 1 day after each past hour that looked like now -> `site/data/odds.json`. The site reads today's 4 facts live from TradingView's screener (`lookOf()` in app.js mirrors `look_index()`) and crypto prices every second from Binance. |
 | `run.py` | `full --max N`: daily/weekly scan of the N least-recently updated instruments. `fast`: 15m/1H/4H for the fast-watch list. |
 | `site/` | The website (plain HTML/JS, no build step) |
 | `.github/workflows/scan.yml` | Runs every 30 minutes on GitHub and publishes the site |

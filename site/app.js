@@ -112,8 +112,8 @@
     $('#modeName').textContent = isTV() ? 'TradingView mode' : 'XTB mode';
     $('#view').innerHTML = '<div class="empty">Loading the latest data…</div>';
     try {
-      const [sum, pats, tv] = await Promise.all([fetchJSON('data/summary.json'), fetchJSON('data/patterns.json').catch(() => ({})), fetchJSON('tv.json').catch(() => ({}))]);
-      S.summary = sum; S.patterns = pats; S.tv = tv;
+      const [sum, pats, tv, od] = await Promise.all([fetchJSON('data/summary.json'), fetchJSON('data/patterns.json').catch(() => ({})), fetchJSON('tv.json').catch(() => ({})), fetchJSON('data/odds.json').catch(() => null)]);
+      S.summary = sum; S.patterns = pats; S.tv = tv; S.odds = od;
     } catch (e) {
       $('#view').innerHTML = `<div class="empty">Could not load the data (${esc(e.message)}).<br>If the site was just created, the first scan may still be running - try again in a few minutes.</div>`;
       return;
@@ -139,7 +139,8 @@
       const sum = await fetchJSON('data/summary.json?t=' + Date.now());
       if (sum.generated === S.summary.generated) return;
       S.summary = sum; showUpdated();
-      if ($('#board')) renderBoard(); else if ($('#rows')) renderRows();
+      S.odds = await fetchJSON('data/odds.json?t=' + Date.now()).catch(() => S.odds);
+      if ($('#board')) renderBoard(); else if ($('#rows')) renderRows(); else if ($('#oddsList')) viewOdds(S.oside);
     } catch (e) { /* keep showing what we have */ }
   }
 
@@ -152,18 +153,22 @@
   function route() {
     if (!S.summary) return;
     if (S.chart) { S.chart.destroy(); S.chart = null; }
+    Live.want([]); Live.hook(null);
     const h = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').map(decodeURIComponent);
     window.scrollTo(0, 0);
     if (h[0] === 'i' && h[1]) return viewInstrument(h[1], h[2] || '1d');
     if (h[0] === 'library') return viewLibrary(h[1] || '1d');
     if (h[0] === 'practice') return viewPractice();
+    if (h[0] === 'odds') { const side = h[1] === 'sell' ? 'sell' : 'buy'; S.back = '#/odds/' + side; return viewOdds(side); }
     if (h[0] === 'list' && TABS[h[1]]) { S.tab = h[1]; S.back = '#/list/' + h[1]; return viewList(); }
     S.back = '#/now';
     viewBoard();
   }
 
   function navTabs(active) {
-    const items = [`<button class="tab ${active === 'now' ? 'on' : ''}" data-go="#/now">CFDs now</button>`].concat(Object.entries(TABS).map(([k, t]) => `<button class="tab ${active === k ? 'on' : ''}" data-go="#/list/${k}">${t.label}</button>`));
+    const items = [`<button class="tab ${active === 'now' ? 'on' : ''}" data-go="#/now">CFDs now</button>`,
+      `<button class="tab ${active === 'odds_buy' ? 'on' : ''}" data-go="#/odds/buy">▲ Good for buying now</button>`,
+      `<button class="tab ${active === 'odds_sell' ? 'on' : ''}" data-go="#/odds/sell">▼ Good for selling now</button>`].concat(Object.entries(TABS).map(([k, t]) => `<button class="tab ${active === k ? 'on' : ''}" data-go="#/list/${k}">${t.label}</button>`));
     items.push(`<button class="tab ${active === 'library' ? 'on' : ''}" data-go="#/library">Pattern library</button>`);
     items.push(`<button class="tab ${active === 'practice' ? 'on' : ''}" data-go="#/practice">Practice</button>`);
     $('#tabs').innerHTML = items.join('');
@@ -278,6 +283,162 @@
         <div class="ladder">${ladder}<span class="faint" style="font-size:12px">${esc(r.ty)}</span></div></div>
       <div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(d.ch, 2)}</div></div>
       <div class="why">${chips.join('')}</div></button>`;
+  }
+
+  // ---------------------------------------------------------------- Good for buying / selling now
+  // "The last times it looked like this". Right now the 1H chart is described by 4 plain facts (read
+  // live from TradingView every 15 s). We then take every past hour of the last 6 months of THE SAME
+  // instrument that had the same 4 facts, and count what price did 1 hour, 4 hours and 1 day later.
+  // engine/odds.py does the counting; lookOf() must stay identical to look_index() there.
+  const ODDS_MIN_WIN = 60;
+  const OCATS = [['all', 'All'], ['Crypto', 'Crypto'], ['Forex', 'Forex'], ['Indices', 'Indices'], ['Commodities', 'Commodities'], ['stocks', 'Stock CFDs']];
+  const lookOf = i => (i.close > i.sma1 ? 12 : 0) + (i.close > i.sma4 ? 6 : 0) + (i.rsi < 40 ? 0 : i.rsi > 60 ? 4 : 2) + (i.macd > i.sig ? 1 : 0);
+  const hzLabel = (o, k) => k === 0 ? '1 hour later' : k === 1 ? '4 hours later' : o.hz[2] >= 20 ? '1 day later' : '1 trading day later';
+  const hzShort = (o, k) => k === 0 ? 'about 1 hour' : k === 1 ? 'about 4 hours' : o.hz[2] >= 20 ? 'about 1 day' : 'about 1 trading day';
+
+  function lookText(L, rsi) {
+    const up1 = L >= 12, up4 = Math.floor(L / 6) % 2 === 1, rb = Math.floor(L / 2) % 3, mom = L % 2 === 1;
+    const r = rsi != null ? ' ' + Math.round(rsi) : '';
+    return [
+      `<span class="chip ${up1 ? 'g' : 'r'}">1H ${up1 ? 'above' : 'below'} its average</span>`,
+      `<span class="chip ${up4 ? 'g' : 'r'}">4H ${up4 ? 'above' : 'below'} its average</span>`,
+      `<span class="chip">RSI${r} ${['low (under 40)', 'middle (40–60)', 'high (over 60)'][rb]}</span>`,
+      `<span class="chip ${mom ? 'g' : 'r'}">Momentum ${mom ? 'up' : 'down'}</span>`].join('');
+  }
+
+  function oddsPool(side) {
+    const od = (S.odds && S.odds.rows) || {};
+    // selling needs a CFD (real shares can only be bought)
+    return S.summary.rows.filter(r => od[r.x] && inMode(r) && (side === 'buy' || r.cfd || !isStockLike(r)));
+  }
+
+  function oddsEval(r, side) {
+    const o = S.odds.rows[r.x], lt = tvLive(r.x), c = lt && Live.q[lt];
+    let L = o.look, live = false, rsi = null;
+    if (c && c.ind && c.p != null && Live.fresh()) { L = lookOf({ ...c.ind, close: c.p }); live = true; rsi = c.ind.rsi; }
+    const st = o.st[L];
+    if (!st) return { L, live, rsi, st: null };
+    const n = st[0];
+    const cells = [0, 1, 2].map(k => {
+      const h = st[k + 1], wins = side === 'buy' ? h[0] : h[1], p = wins / n * 100, fav = side === 'buy' ? h[2] : -h[2];
+      const base = o.base[k] ? o.base[k][side === 'buy' ? 0 : 1] : null, z = luckZ(p, base, n);
+      // good = right 6+ times in 10, better than what price normally did, and gained on average
+      return { k, wins, p, fav, base, z, good: p >= ODDS_MIN_WIN && (base == null || p > base) && fav > 0,
+        typ: side === 'buy' ? h[3] : h[4], stop: side === 'buy' ? h[5] : h[6], worst: side === 'buy' ? h[7] : h[8] };
+    });
+    // the most trustworthy horizon first: furthest above normal for the number of past times
+    const best = cells.filter(x => x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
+    return { L, live, rsi, st, n, cells, best };
+  }
+
+  // could a result this good happen by luck, compared with what price normally did?
+  // z = how many standard errors the win rate sits above normal (1.65 = about 95% sure)
+  function luckZ(p, base, n) {
+    const p0 = Math.min(Math.max((base != null ? base : 50) / 100, 0.05), 0.95);
+    return (p / 100 - p0) / Math.sqrt(p0 * (1 - p0) / n);
+  }
+  function luckChip(c, n) {
+    const p0 = Math.min(Math.max((c.base != null ? c.base : 50) / 100, 0.05), 0.95);
+    return c.z >= 1.65 ? `<span class="chip g" title="Clearly better than normal (${Math.round(p0 * 100)}%) - about 95% sure it is not luck.">Passes the luck test</span>`
+      : `<span class="chip y" title="Normally price went this way ${Math.round(p0 * 100)}% of the time. With ${n} past times, a result like this can still happen by luck.">Could still be luck</span>`;
+  }
+
+  function rrChip(typ, stop) {
+    // a typical gain much smaller than the stop means one loss wipes out several wins
+    const rr = Math.abs(typ) / stop;
+    if (rr < 0.5) return `<span class="chip y" title="When it went your way it usually moved ${Math.abs(typ).toFixed(2)}%, but the stop is ${stop.toFixed(2)}% away. One stopped-out trade can wipe out several wins.">Stop is ${(1 / rr).toFixed(1)}× bigger than the typical gain</span>`;
+    return `<span class="chip" title="Typical gain when it went your way, compared with the stop distance">Typical gain vs stop: ${rr.toFixed(1)} : 1</span>`;
+  }
+
+  function viewOdds(side) {
+    S.oside = side;
+    navTabs('odds_' + side);
+    S.ocat = S.ocat || store.get('ocat', 'all');
+    const buy = side === 'buy', closed = weekend();
+    if (!S.odds || !S.odds.rows) {
+      $('#view').innerHTML = '<div class="empty">The first scan with this new check has not finished yet. It runs about every 15 minutes - try again soon.</div>';
+      return;
+    }
+    $('#view').innerHTML = `
+      <p class="intro"><b class="${buy ? 'up' : 'down'}">${buy ? 'Where past moments like right now were usually followed by a RISE.' : 'Where past moments like right now were usually followed by a FALL.'}</b>
+        ${buy ? '' : 'With a CFD SELL you gain when the price falls (real shares cannot be sold this way, so only CFDs are listed).'}
+        <span class="warn">This is what happened before, not a prediction. Every row shows a stop loss: set it in XTB when you open the trade, and check the price in the XTB app first (it can differ slightly).</span>
+        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Other markets show Friday\'s close and are listed last.</span>' : ''}</p>
+      <details class="how"${store.get('howOpen', true) ? ' open' : ''}><summary>How it works</summary><p class="intro">Right now each instrument's 1H chart is described by 4 simple facts (shown on every row). We look back over the <b>last ${S.odds.months} months</b> of that same instrument,
+        find every hour that had the same 4 facts, and count what price did <b>1 hour, 4 hours and 1 day later</b>.
+        Listed only when price went your way <b>at least ${ODDS_MIN_WIN}% of the time</b>, more often than it normally does, from <b>at least ${S.odds.min_n} past times</b>, and ${buy ? 'rose' : 'fell'} on average.
+        The most trustworthy are at the top (those that beat normal by the most).
+        The facts are re-checked live every 15 seconds (crypto prices every second).
+        <b>Normal</b> = how often price went that way after any hour, whatever it looked like.</p></details>
+      <div class="filters">
+        <div class="seg wrap" role="group" aria-label="Market">${OCATS.map(([k, l]) => `<button data-ocat="${k}" class="${S.ocat === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <input id="oq" type="search" placeholder="Search…" aria-label="Search" value="${esc(S.oq || '')}">
+      </div>
+      <div id="oddsStatus" class="countbar faint"></div>
+      <div class="rows" id="oddsList"></div>`;
+    document.querySelectorAll('[data-ocat]').forEach(b => b.onclick = () => { S.ocat = b.dataset.ocat; store.set('ocat', S.ocat); viewOdds(side); });
+    $('#oq').oninput = e => { S.oq = e.target.value; S.osig = ''; renderOdds(); };
+    // first visit: explanation open; after the first close it stays closed
+    $('.how').ontoggle = e => store.set('howOpen', e.target.open);
+    Live.want(oddsPool(side).map(r => tvLive(r.x)).filter(Boolean));
+    Live.hook(() => { if ($('#oddsList')) renderOdds(); });
+    S.osig = '';
+    renderOdds();
+    Live.poll();
+  }
+
+  function renderOdds() {
+    const box = $('#oddsList'); if (!box) return;
+    const side = S.oside, cat = S.ocat, q = (S.oq || '').trim().toLowerCase();
+    let all = oddsPool(side);
+    if (cat === 'stocks') all = all.filter(isStockLike); else if (cat !== 'all') all = all.filter(r => r.ty === cat);
+    if (q) all = all.filter(r => r.n.toLowerCase().includes(q) || r.x.toLowerCase().includes(q) || tvSym(r.x).toLowerCase().includes(q));
+    const good = [], cnt = { live: 0, few: 0, other: 0 };
+    for (const r of all) {
+      const e = oddsEval(r, side);
+      if (e.live) cnt.live++;
+      if (!e.st) cnt.few++; else if (e.best) good.push({ r, e }); else cnt.other++;
+    }
+    good.sort((a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
+    const liveTxt = Live.fresh() ? `Facts checked live for ${cnt.live === all.length ? 'all ' + all.length : cnt.live + ' of ' + all.length} instruments`
+      : 'Live check not reachable right now - using the facts from the last scan (' + ago(S.odds.generated) + ')';
+    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length}</b> favourable right now · ${cnt.other} with no clear edge today · ${cnt.few} without enough past times for today's look</span><span>${liveTxt}</span>`;
+    // only rebuild the list when something in it changed (prices update in place every second)
+    const sig = good.map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh();
+    if (sig === S.osig) { Live.paint(); return; }
+    S.osig = sig;
+    box.innerHTML = good.length ? good.map(oddsRow).join('') : `<div class="empty">Nothing is clearly favourable for ${side === 'buy' ? 'buying' : 'selling'} right now${cat !== 'all' ? ' in this group' : ''}.
+      That is normal: it changes as prices move, and this page re-checks by itself every 15 seconds.</div>`;
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/1h`; });
+    Live.paint();
+  }
+
+  function oddsRow({ r, e }) {
+    const side = S.oside, buy = side === 'buy', o = S.odds.rows[r.x], lt = tvLive(r.x), b = e.best;
+    const c = lt && Live.q[lt], price = (c && c.p) || (r.live ? r.live.p : r.d.p), dp = decimalsOf(price);
+    const lvl = f => `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>`;
+    const stop = Math.max(b.stop, 0.05), fs = buy ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + b.typ / 100;
+    const cells = e.cells.map(x => `<div class="oc ${x.good ? 'good' : ''} ${x === b ? 'best' : ''}">
+        <span class="faint">${hzLabel(o, x.k)}</span>
+        <span class="op num ${x.good ? (buy ? 'up' : 'down') : ''}">${Math.round(x.p)}%</span>
+        <span>${buy ? 'rose' : 'fell'} <b>${x.wins}</b> of ${e.n}</span>
+        <span class="faint">normal ${x.base != null ? Math.round(x.base) + '%' : '–'}</span></div>`).join('');
+    const crypto = lt && lt.startsWith('BINANCE:');
+    return `<button class="row orow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(r.x)}">
+      <div class="name"><span class="verdict ${buy ? 'g' : 'r'}">${buy ? '▲ BUY' : '▼ SELL'} · ${Math.round(b.p)}%</span> ${esc(r.n)}<span class="sym">${esc(shownSym(r))}</span>
+        <div class="faint" style="font-size:12px;font-weight:400">${esc(r.ty)} · looked like this ${e.n} times in the last ${S.odds.months} months${e.live ? '' : ' · facts from the last scan'}</div></div>
+      <div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, dp) : '–'}</span><div class="lc ${r.d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${pct(r.d.ch, 2)}</div>
+        <div class="faint" style="font-size:11px;font-weight:400">${lt ? (crypto ? 'live · every second' : 'live price') : 'last scan price'}</div></div>
+      <div class="why"><span class="faint" style="font-size:12.5px;align-self:center">Right now:</span>${lookText(e.L, e.rsi)}</div>
+      <div class="ocells">${cells}</div>
+      <div class="olevels">
+        <div>For a trade of ${hzShort(o, b.k)}:</div>
+        <div><span class="down">Stop loss</span> ${buy ? 'below' : 'above'} ${lvl(fs)} <span class="faint">(${buy ? '−' : '+'}${stop.toFixed(2)}%: 8 of 10 past times never went that far against you)</span></div>
+        <div><span class="up">IF</span> it moves like a typical past ${buy ? 'rise' : 'fall'}: ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}), not a prediction</span></div>
+      </div>
+      <div class="why">${luckChip(b, e.n)}${rrChip(b.typ, stop)}<span class="chip">Average result per trade: ${pct(b.fav, 2)} before XTB's spread</span>
+        <span class="chip y">Worst past move against you: ${buy ? '−' : '+'}${b.worst.toFixed(2)}%</span>${isOpen(r) ? '' : '<span class="chip y">Market closed (weekend)</span>'}</div>
+    </button>`;
   }
 
   // ---------------------------------------------------------------- list view
@@ -579,8 +740,11 @@
   // by itself between scans. If it ever stops answering, the page simply keeps the scan prices.
   const Live = (() => {
     const URL_SCAN = 'https://scanner.tradingview.com/global/scan';
-    const q = {};            // ticker -> {p, ch, mode, rec}
-    let busy = false, again = false, okAt = 0, failed = 0, timer = null;
+    const q = {};            // ticker -> {p, ch, mode, rec, ind: {sma1, sma4, rsi, macd, sig}, at}
+    let busy = false, again = false, okAt = 0, failed = 0, timer = null, extra = [], onUpdate = null;
+    // TradingView columns. The last five describe the 1H chart for the Good for buying / selling
+    // tabs - the same facts engine/odds.py reads from past candles.
+    const COLS = ['close', 'change', 'update_mode', 'Recommend.All', 'SMA50|60', 'SMA50|240', 'RSI|60', 'MACD.macd|60', 'MACD.signal|60'];
     const TAPE = [['US500', 'S&P 500'], ['US100', 'Nasdaq 100'], ['DE40', 'DAX'], ['JP225', 'Nikkei'], ['GOLD', 'Gold'],
       ['OIL.WTI', 'Oil WTI'], ['EURUSD', 'EUR/USD'], ['USDJPY', 'USD/JPY'], ['BITCOIN', 'Bitcoin'], ['ETHEREUM', 'Ethereum']];
     const tapeItems = () => {
@@ -599,6 +763,7 @@
     function wanted() {
       const s = new Set();
       document.querySelectorAll('[data-live]').forEach(e => s.add(e.dataset.live));
+      extra.forEach(t => s.add(t));
       return [...s];
     }
 
@@ -610,17 +775,50 @@
       busy = true;
       try {
         for (let i = 0; i < tickers.length; i += 400) {
-          const res = await fetch(URL_SCAN, { method: 'POST', body: JSON.stringify({ symbols: { tickers: tickers.slice(i, i + 400) }, columns: ['close', 'change', 'update_mode', 'Recommend.All'] }) });
+          const res = await fetch(URL_SCAN, { method: 'POST', body: JSON.stringify({ symbols: { tickers: tickers.slice(i, i + 400) }, columns: COLS }) });
           if (!res.ok) throw new Error(res.status);
           const js = await res.json();
-          for (const r of js.data || []) q[r.s] = { p: r.d[0], ch: r.d[1], mode: r.d[2] || '', rec: r.d[3] };
+          for (const r of js.data || []) {
+            const d = r.d, old = q[r.s];
+            // a Binance tick that is newer than TradingView's answer keeps its price
+            const p = old && old.bin && Date.now() - old.bin < 5000 ? old.p : d[0];
+            q[r.s] = { p, ch: d[1], mode: d[2] || '', rec: d[3], at: Date.now(), bin: old && old.bin,
+              ind: d[4] == null || d[6] == null || d[7] == null ? null : { sma1: d[4], sma4: d[5], rsi: d[6], macd: d[7], sig: d[8] } };
+          }
         }
         okAt = Date.now(); failed = 0;
       } catch (e) { failed++; }
       busy = false;
       paint();
+      Bin.sync(tickers);
+      if (onUpdate) onUpdate();
       if (again) { again = false; poll(); }
     }
+
+    // Binance's public price stream: crypto prices every second (TradingView's answer is every 15 s)
+    const Bin = (() => {
+      let ws = null, key = '', last = 0, pending = false;
+      const sym = t => t.startsWith('BINANCE:') && t.endsWith('USDT') ? t.slice(8).toLowerCase() : null;
+      function sync(tickers) {
+        const want = tickers.map(sym).filter(Boolean).sort();
+        const k = want.join('/');
+        // keep the open connection when it already covers every coin wanted (e.g. leaving the odds tab)
+        if (ws && ws.readyState <= 1 && want.every(w => key.split('/').includes(w))) return;
+        key = k;
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
+        if (!want.length) return;
+        try { ws = new WebSocket('wss://data-stream.binance.vision/stream?streams=' + want.map(s => s + '@miniTicker').join('/')); } catch (e) { return; }
+        ws.onmessage = ev => {
+          let m; try { m = JSON.parse(ev.data).data; } catch (e) { return; }
+          if (!m || !m.s) return;
+          const t = 'BINANCE:' + m.s, c = q[t] || (q[t] = { mode: 'streaming' });
+          c.p = +m.c; c.bin = Date.now();
+          if (!pending) { pending = true; setTimeout(() => { pending = false; last = Date.now(); paint(); }, Math.max(0, 1000 - (Date.now() - last))); }
+        };
+        ws.onclose = () => { ws = null; key = ''; };  // the next poll reconnects
+      }
+      return { sync, on: () => ws && ws.readyState === 1 };
+    })();
 
     function recLabel(v) {
       if (v == null) return null;
@@ -645,6 +843,11 @@
         const note = el.querySelector('.lnote');
         if (note) note.textContent = 'Live price · ' + (c.mode.startsWith('delayed') ? `delayed ${Math.round((+c.mode.split('_').pop() || 900) / 60)} min` : 'real time') + (weekend() && !el.dataset.live.startsWith('BINANCE') && !el.dataset.live.startsWith('COINBASE') ? ' · market closed for the weekend' : '');
       });
+      // stop / target prices written as "live price x factor"
+      document.querySelectorAll('[data-lvl]').forEach(el => {
+        const c = q[el.dataset.lvl];
+        if (c && c.p != null) el.textContent = fmt(c.p * +el.dataset.f);
+      });
       document.querySelectorAll('[data-rec]').forEach(el => {
         const c = q[el.dataset.rec], l = c && recLabel(c.rec);
         el.innerHTML = l ? `<span class="chip ${l[1]}" title="TradingView's own technical summary (moving averages + oscillators). A second opinion, separate from the scores on this page.">TradingView rating: ${l[0]}</span>` : '';
@@ -665,7 +868,10 @@
       timer = setInterval(poll, 15000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
     }
-    return { start, poll, paint };
+    // extra tickers to fetch even when they are not drawn (the odds tabs need every instrument's facts)
+    function want(list) { extra = list || []; }
+    function hook(fn) { onUpdate = fn; }
+    return { start, poll, paint, want, hook, q, fresh: () => Date.now() - okAt < 60000, binOn: () => Bin.on() };
   })();
 
   // ---------------------------------------------------------------- library

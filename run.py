@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from engine import alerts, store
+from engine import alerts, odds, store
 from engine.analyze import analyze, pool_outcomes
 from engine.data import fix_forex_daily, is_forex, resample
 
@@ -280,10 +280,17 @@ def run_fast():
     pooled = read_json(os.path.join(STATE, "pooled.json"), {})
     collected = {"15m": [], "1h": [], "4h": []}
     touched = []
+    odds_rows = {}
 
     for f in fast:
         y, x = f["yahoo"], f["xtb"]
         frames = {"1h": h1.get(y), "15m": m15.get(y)}
+        try:  # 'last times it looked like this' (Good for buying / selling now tabs)
+            o = odds.odds(frames["1h"])
+            if o:
+                odds_rows[x] = o
+        except Exception as e:
+            log("odds skip", x, repr(e)[:120])
         if frames["1h"] is not None:
             frames["4h"] = resample(frames["1h"], "4h")
             frames["1h"] = frames["1h"].iloc[-1500:]
@@ -323,6 +330,10 @@ def run_fast():
     write_json(os.path.join(SITE_DATA, "patterns.json"), pooled)
     summary["generated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     summary["fast_scan"] = summary["generated"]
+    write_json(os.path.join(SITE_DATA, "odds.json"),
+               {"generated": summary["generated"], "months": odds.MONTHS, "min_n": odds.MIN_N,
+                "spacing": odds.SPACING, "rows": odds_rows})
+    log(f"odds for {len(odds_rows)} instruments")
     write_json(os.path.join(SITE_DATA, "summary.json"), summary)
     log(f"fast scan done in {time.time() - t0:.0f}s")
     return summary

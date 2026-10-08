@@ -188,3 +188,17 @@ a.copy{color:var(--accent);display:inline-block}
   .seg.wrap button{flex:0 0 auto}
 }
 @media (max-width:340px){#updated{display:none}}
+
+/* ---------- Good for buying / selling now ---------- */
+.orow.b-up{border-left:3px solid var(--up)} .orow.b-down{border-left:3px solid var(--down)}
+.orow .name{white-space:normal}
+.orow .chip{white-space:normal}
+.ocells{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:4px}
+.oc{display:flex;flex-direction:column;gap:1px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:7px 9px;font-size:12.5px;line-height:1.35}
+.oc .op{font-size:20px;font-weight:700}
+.oc.good{border-color:#2c4a3c} .oc.best{border-color:var(--accent)}
+.olevels{grid-column:1/-1;font-size:13.5px;background:var(--bg2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+#oddsStatus{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;font-size:13px}
+@media (max-width:420px){.oc{padding:6px 7px;font-size:11.5px}.oc .op{font-size:17px}}
+details.how{margin:-4px 0 12px}
+details.how summary{cursor:pointer;color:var(--accent);font-size:14px;margin-bottom:6px}

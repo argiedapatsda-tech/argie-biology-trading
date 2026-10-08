@@ -72,6 +72,11 @@ def main():
         assert s3 is not None
         rows = {r["x"]: r for r in s3["rows"]}
         assert "i" in rows["GOLD"] and "4h" in rows["GOLD"]["i"], rows["GOLD"].keys()
+        od = json.load(open(os.path.join(run.SITE_DATA, "odds.json")))
+        assert "GOLD" in od["rows"] and "EURUSD" in od["rows"], od["rows"].keys()
+        g_o = od["rows"]["GOLD"]
+        assert 0 <= g_o["look"] < 24 and g_o["st"] and len(g_o["base"]) == 3
+        print(f"odds.json: {len(od['rows'])} instruments, {os.path.getsize(os.path.join(run.SITE_DATA, 'odds.json')) / 1024:.0f} KB")
         det = json.load(open(os.path.join(run.DETAIL, "GOLD.json")))
         assert set(det["tf"]) >= {"1d", "1wk", "15m", "1h", "4h"}, det["tf"].keys()
         d = det["tf"]["1d"]
