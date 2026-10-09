@@ -15,11 +15,12 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+from .money import lq_usd
 from .patterns import PATTERNS
 
 SITE = "https://argiedapatsda-tech.github.io/argie-biology-trading/"
 MAX_PER_RUN = 8            # never flood the phone
-MIN_LIQ = 5e6              # stocks/ETFs must trade at least this much per day
+MIN_LIQ = 5e6              # stocks/ETFs must trade at least this many US dollars per day
 TF_NAME = {"1d": "Daily", "4h": "4H", "1h": "1H"}
 
 
@@ -64,7 +65,7 @@ def _eligible(row):
     if not row.get("cfd"):
         return False
     if row["ty"] in ("Stocks", "ETFs"):
-        return (row["d"].get("lq") or 0) >= MIN_LIQ
+        return (lq_usd(row) or 0) >= MIN_LIQ
     return True
 
 
@@ -171,7 +172,7 @@ def morning_digest(rows, state_dir, log=print):
     good = [r for r in rows if _eligible(r) and r["d"].get("b") is not None]
     buys = sorted([r for r in good if r["d"]["b"] >= 70], key=lambda r: -r["d"]["b"])[:5]
     sells = sorted([r for r in good if r["d"]["s"] >= 70], key=lambda r: -r["d"]["s"])[:5]
-    inv = sorted([r for r in rows if (r["d"].get("inv") or {}).get("score", 0) >= 85 and (r["d"].get("lq") or 0) >= 2e7],
+    inv = sorted([r for r in rows if (r["d"].get("inv") or {}).get("score", 0) >= 85 and (lq_usd(r) or 0) >= 2e7],
                  key=lambda r: -r["d"]["inv"]["score"])[:5]
     fmt = lambda r, k: f'• <a href="{_link(r["x"], "1d")}">{_esc(r["n"])}</a> ({_esc(r["x"])}) {r["d"][k]}'
     parts = ["☀️ <b>Morning summary</b> (Daily charts)"]

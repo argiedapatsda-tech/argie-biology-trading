@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from engine import alerts, odds, store
+from engine.money import lq_usd
 from engine.analyze import analyze, pool_outcomes
 from engine.data import fix_forex_daily, is_forex, last_closed_index, resample
 
@@ -24,7 +25,7 @@ STATE = os.path.join(ROOT, "state")
 SITE_DATA = os.path.join(ROOT, "site", "data")
 DETAIL = os.path.join(SITE_DATA, "detail")
 FAST_SIZE = 120          # stocks/ETFs added to the fast-watch list
-FAST_MIN_LIQ = 5e6       # ...only if they trade at least this much per day (price x volume)
+FAST_MIN_LIQ = 5e6       # ...only if they trade at least this many US dollars per day (price x volume)
 
 
 def log(*a):
@@ -343,7 +344,7 @@ def choose_fast(rows):
     """Every non-stock instrument + the strongest liquid CFD stocks/ETFs right now."""
     fast = [r for r in rows if r["ty"] not in ("Stocks", "ETFs")]
     cands = [r for r in rows if r["ty"] in ("Stocks", "ETFs") and r.get("cfd") and not r.get("tvo")
-             and (r["d"].get("lq") or 0) >= FAST_MIN_LIQ]
+             and (lq_usd(r) or 0) >= FAST_MIN_LIQ]
     cands.sort(key=lambda r: -max(r["d"].get("b") or 0, r["d"].get("s") or 0))
     fast += cands[:FAST_SIZE]
     return [{"xtb": r["x"], "yahoo": r["y"]} for r in fast]

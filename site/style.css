@@ -247,3 +247,12 @@ a.dl:hover{color:var(--accent)}
 .rname{font-weight:600}
 .row .meta{font-size:12px;font-weight:400;margin-top:1px}
 .decrow .sym{margin-left:0}
+
+/* ---------- size groups: big well-known names first, everything still listed ---------- */
+.tierhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0 2px;padding:8px 12px;border-radius:10px;
+  background:var(--card2);border-left:4px solid var(--accent);font-size:13.5px;font-weight:600;color:var(--text)}
+.tierhead:first-child{margin-top:0}
+.tierhead span{color:var(--muted);font-weight:400;white-space:nowrap}
+.tierhead.t1{border-left-color:var(--up)} .tierhead.t2{border-left-color:var(--warn)} .tierhead.t3{border-left-color:var(--faint)}
+/* long lists (every instrument): the browser skips drawing rows far off screen */
+.rows > .row{content-visibility:auto;contain-intrinsic-size:auto 120px}

@@ -47,6 +47,27 @@
   function meter(v, col) { return `<span class="meter"><i style="width:${v || 0}%;background:${col}"></i></span>`; }
   const isStockLike = r => r.ty === 'Stocks' || r.ty === 'ETFs';
   const inv = r => (r.d && r.d.inv) ? r.d.inv.score : null;
+  // daily trading size in US dollars: the scan stores it in the quote currency, and London shares are
+  // quoted in pence (100x too big). Rough rates are enough to sort big from small. Mirrors engine/money.py
+  const USD_RATE = { USD: 1, EUR: 1.16, GBP: 1.33 / 100, CHF: 1.25, SEK: 0.105, NOK: 0.10, DKK: 0.155, CZK: 0.047, THB: 0.03, PLN: 0.27 };
+  const lqUsd = r => (r.d && r.d.lq != null) ? r.d.lq * (USD_RATE[r.cur || 'USD'] ?? 1) : null;
+  const bySize = (a, b) => (lqUsd(b) || 0) - (lqUsd(a) || 0);
+  // every list shows everything, in size groups: big well-known names first, unknown size last.
+  // forex, indices, commodities and crypto are big markets, so they sit in the first group
+  const TIERS = ['Big, well-known names · trade over $50 million a day', 'Medium · $5–50 million a day',
+    'Small and thinly traded · under $5 million a day · prices jump, spreads are wide', 'Trading size unknown · treat as small'];
+  const sizeTier = r => { if (!isStockLike(r)) return 0; const v = lqUsd(r); return v == null ? 3 : v >= 5e7 ? 0 : v >= 5e6 ? 1 : 2; };
+  const tierHead = (t, n) => `<div class="tierhead t${t}">${esc(TIERS[t])}<span>${n.toLocaleString()}</span></div>`;
+  // render rows with a heading each time the size group changes
+  function tiered(items, rowOf, rOf = x => x) {
+    const cnt = [0, 0, 0, 0]; items.forEach(x => cnt[sizeTier(rOf(x))]++);
+    let last = -1;
+    return items.map(x => { const t = sizeTier(rOf(x)), h = t !== last ? tierHead(t, cnt[t]) : ''; last = t; return h + rowOf(x); }).join('');
+  }
+  // money-market / overnight-rate / very short bond funds rise a few cents almost every week:
+  // "rose 100% of the time" is true and useless, so they never get BUY or SELL
+  const cashLike = r => r.ty === 'ETFs' && r.d && r.d.inv && r.d.inv.vol != null && r.d.inv.vol < 2;
+  const ALL = 1e9;  // lists show everything
   function tfData(r, tf) { return tf === '1d' ? r.d : tf === '1wk' ? r.w : (r.i && r.i[tf]); }
   const isTV = () => S.mode === 'tv';
   const tvSym = x => S.tv[x] || '';
@@ -197,7 +218,7 @@
         // cash-like funds (T-bill ETFs) rise almost every week by tiny amounts: nothing to trade
         good: ks.includes(k) && strong(p, base, minP, fav) && (buy ? c[4] : c[5]) != null && Math.abs(buy ? c[4] : c[5]) >= MIN_MOVE };
     });
-    cells.forEach(x => { if (x && x.good && x.z < Z_MIN) x.good = false; });
+    cells.forEach(x => { if (x && x.good && (x.z < Z_MIN || cashLike(r))) x.good = false; });
     const best = cells.filter(x => x && x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
     return { src: 'd', L: od.L, cells, best, n: cells[0].n, live: false };
   }
@@ -281,8 +302,8 @@
       </div>`;
     const wire = () => {
       document.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { f.cat = b.dataset.cat; store.set('cat_' + sec, f.cat); if (!(f.cat === 'Stocks' || f.cat === 'ETFs' || sec === 'inv')) f.mkt = ''; route(); });
-      const q = $('.fq'); if (q) q.oninput = e => { f.q = e.target.value; S.shown = 50; onChange(); };
-      const m = $('.fm'); if (m) m.onchange = e => { f.mkt = e.target.value; S.shown = 50; onChange(); };
+      const q = $('.fq'); if (q) q.oninput = e => { f.q = e.target.value; S.shown = ALL; onChange(); };
+      const m = $('.fm'); if (m) m.onchange = e => { f.mkt = e.target.value; S.shown = ALL; onChange(); };
     };
     return { html, wire };
   }
@@ -314,7 +335,7 @@
   const dl = (id, txt) => `<a class="dl" href="#/dict/${id}">${txt}</a>`;
 
   function viewSection(sec, sub) {
-    S.sec = sec; S.sub = sub; S.shown = 50;
+    S.sec = sec; S.sub = sub; S.shown = ALL;
     navTabs(sec, sub);
     if (sec === 'cfd' && sub === 'now') return viewBoard();
     if (sub === 'buy' || sub === 'sell') return viewProb(sec, sub);
@@ -364,7 +385,7 @@
       const g = dec.word === 'buy' || dec.word === 'sell' ? 'go' : !hasData(r) ? 'none' : dirOf(v) ? 'lean' : dec.word === 'none' && !t ? 'none' : 'wait';
       groups[g].push({ r, t, v, dec, z: dec.c ? dec.c.z : 0, str: t && t.b != null ? Math.max(t.b, t.s) : 0 });
     }
-    const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.z - a.z) || (b.str - a.str) || ((b.r.d.lq || 0) - (a.r.d.lq || 0));
+    const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.z - a.z) || (b.str - a.str) || bySize(a.r, b.r);
     Object.values(groups).forEach(g => g.sort(order));
     const SEC = {
       go: ['BUY or SELL now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
@@ -471,6 +492,7 @@
         good: ks.includes(k) && strong(p, base, WIN_MIN, fav) && z >= Z_MIN && (side === 'buy' ? h[3] : h[4]) != null,
         typ: side === 'buy' ? h[3] : h[4], stop: side === 'buy' ? h[5] : h[6], worst: side === 'buy' ? h[7] : h[8] };
     });
+    if (cashLike(r)) cells.forEach(x => { x.good = false; });
     const best = cells.filter(x => x.good).sort((a, b) => b.z - a.z || b.p - a.p)[0] || null;
     return { src: 'h', L, live, rsi, st, n, cells, best };
   }
@@ -556,15 +578,17 @@
       if (e.best) good.push({ r, e }); else cnt.other++;
     }
     // thinly traded shares (under 1M a day) jump around and have wide spreads: listed after the rest
-    const thin = r => isStockLike(r) && r.d.lq != null && r.d.lq < 1e6 ? 1 : 0;
-    good.sort((a, b) => (isOpen(b.r) - isOpen(a.r)) || (thin(a.r) - thin(b.r)) || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
+    // big group: the most traded (best-known) names first; smaller groups: strongest odds first
+    good.sort((a, b) => (sizeTier(a.r) - sizeTier(b.r)) || (isOpen(b.r) - isOpen(a.r))
+      || (sizeTier(a.r) === 0 && isStockLike(a.r) && isStockLike(b.r) ? bySize(a.r, b.r) : 0)
+      || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
     const liveTxt = !hours ? `From each instrument's last scan` : Live.fresh() ? `Facts checked live for ${cnt.live} instruments` : 'Live check not reachable - using the last scan (' + ago(S.odds.generated) + ')';
     $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${side === 'buy' ? 'good for buying' : inv ? 'to sell' : 'good for selling'} now · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
     const sig = good.slice(0, S.shown).map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh() + '#' + S.shown;
     if (sig === S.osig) { Live.paint(); return; }
     S.osig = sig;
     const shown = good.slice(0, S.shown);
-    box.innerHTML = good.length ? shown.map(g => probRow(g, sec, side)).join('') + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : '')
+    box.innerHTML = good.length ? tiered(shown, g => probRow(g, sec, side), g => g.r) + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : '')
       : `<div class="empty">Nothing is clearly ${side === 'buy' ? 'good for buying' : 'good for selling'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
       That is normal. It changes as prices move${hours ? ', and this page re-checks by itself every 15 seconds' : ''}.</div>`;
     box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${hours ? '1h' : '1d'}`; });
@@ -599,23 +623,23 @@
       intro: () => `Instruments where several chart signals line up right now (signal score 70+ out of 100). <b>Buy side</b> = upward signals, <b>Sell side</b> = downward signals.
         Signals are not the same as odds: the word on each row (BUY / SELL / WAIT) says whether moments like this actually worked before. Daily and Weekly cover everything; 4H / 1H only the fast-watch list.`,
       filter: r => { const t = tfData(r, S.ctf); return t && (S.side === 'buy' ? t.b >= 70 : t.s >= 70); },
-      sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || ((b.d.lq || 0) - (a.d.lq || 0)); },
+      sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || bySize(a, b); },
     },
     'cfd/avoid': {
       intro: () => `CFDs with <b>no clear direction</b> on the Daily chart: both signal scores are under 40 and the odds show no edge. Trades here are close to a coin flip, so most traders wait.`,
       filter: r => r.d.b != null && r.d.b < 40 && r.d.s < 40 && decide(r, 'days').word === 'wait',
-      sort: (a, b) => (b.d.lq || 0) - (a.d.lq || 0),
+      sort: bySize,
     },
     'inv/strong': {
       intro: () => `Stocks and ETFs with a healthy long-term picture (months to years). Long-term trend score 0–100 from the 200-day average, 6- and 12-month performance, distance from the 52-week high and how wild the price moves. Only 70+ listed.
         Each stock also shows ${dl('company-health', 'company health')} (sales, profit, debt) from TradingView.`,
       filter: r => inv(r) >= 70,
-      sort: (a, b) => (inv(b) - inv(a)) || ((b.d.lq || 0) - (a.d.lq || 0)),
+      sort: (a, b) => (inv(b) - inv(a)) || bySize(a, b),
     },
     'inv/weak': {
       intro: () => 'Stocks and ETFs whose long-term picture is poor right now: below the 200-day average, lower than 6–12 months ago, far from their highs. Long-term trend score 30 or less. This is the price trend; check company health before deciding.',
       filter: r => inv(r) != null && inv(r) <= 30,
-      sort: (a, b) => (inv(a) - inv(b)) || ((b.d.lq || 0) - (a.d.lq || 0)),
+      sort: (a, b) => (inv(a) - inv(b)) || bySize(a, b),
     },
   };
 
@@ -638,7 +662,7 @@
   function currentList() {
     const T = LISTS[S.sec + '/' + S.sub];
     const list = sectionPool(S.sec).filter(r => { if (!hasData(r)) return false; try { return T.filter(r); } catch (e) { return false; } });
-    list.sort(T.sort);
+    list.sort((a, b) => (sizeTier(a) - sizeTier(b)) || T.sort(a, b));
     return list;
   }
 
@@ -660,7 +684,7 @@
     const list = currentList();
     $('#count').textContent = `${list.length.toLocaleString()} match${list.length === 1 ? '' : 'es'}`;
     if (!list.length) { $('#rows').innerHTML = '<div class="empty">Nothing matches right now. Try another kind, chart or filter.</div>'; return; }
-    $('#rows').innerHTML = list.slice(0, S.shown).map(rowHTML).join('') +
+    $('#rows').innerHTML = tiered(list.slice(0, S.shown), rowHTML) +
       (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
     $('#rows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${S.sec === 'cfd' && S.sub === 'strong' ? S.ctf : '1d'}`; });
     const m = $('#more'); if (m) m.onclick = () => { S.shown += 50; renderRows(); };
@@ -705,7 +729,7 @@
   function metaLine(r) {
     const d = r.d || {};
     const tags = isTV() ? (r.tvo ? 'Thai SET (not on XTB)' : '') : [r.cfd ? 'CFD' : '', r.real ? 'Real shares' : ''].filter(Boolean).join(' + ');
-    return `${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${d.lq ? ' · trades ' + money(d.lq) + ' ' + esc(r.cur || '') + '/day' : ''}`;
+    return `${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${lqUsd(r) ? ' · trades about $' + money(lqUsd(r)) + '/day' : ''}`;
   }
 
   // ---------------------------------------------------------------- search all
@@ -713,7 +737,7 @@
     navTabs('search');
     S.sq = S.sq || '';
     S.sty = S.sty || '';
-    S.shown = 50;
+    S.shown = ALL;
     const rows = S.summary.rows.filter(inMode);
     const types = [...new Set(rows.map(r => r.ty))].sort();
     const nd = rows.filter(r => !hasData(r)).length;
@@ -724,8 +748,8 @@
       <div class="filters"><div class="seg wrap" role="group" aria-label="Kind"><button data-sty="" class="${S.sty ? '' : 'on'}">All</button>${types.map(t => `<button data-sty="${esc(t)}" class="${S.sty === t ? 'on' : ''}">${esc(t)}</button>`).join('')}</div></div>
       <div class="countbar"><span id="count" class="faint"></span></div>
       <div class="rows" id="srows"></div>`;
-    $('#sq').oninput = e => { S.sq = e.target.value; S.shown = 50; renderSearch(); };
-    document.querySelectorAll('[data-sty]').forEach(b => b.onclick = () => { S.sty = b.dataset.sty; document.querySelectorAll('[data-sty]').forEach(o => o.classList.toggle('on', o === b)); S.shown = 50; renderSearch(); });
+    $('#sq').oninput = e => { S.sq = e.target.value; S.shown = ALL; renderSearch(); };
+    document.querySelectorAll('[data-sty]').forEach(b => b.onclick = () => { S.sty = b.dataset.sty; document.querySelectorAll('[data-sty]').forEach(o => o.classList.toggle('on', o === b)); S.shown = ALL; renderSearch(); });
     renderSearch();
   }
 
@@ -739,10 +763,10 @@
       const x = norm(r.x.replace(/\.[A-Z]+$/, '')).replace(/ /g, ''), n = norm(r.n), al = (ALIAS[r.x] || '').split(' ');
       return x === g || al.includes(g) ? 0 : n.startsWith(q) || n.replace(/ /g, '').startsWith(g) ? 1 : (' ' + n).includes(' ' + q) ? 2 : 3;
     };
-    list.sort((a, b) => rank(a) - rank(b) || hasData(b) - hasData(a) || ((b.d.lq || 0) - (a.d.lq || 0)));
+    list.sort((a, b) => rank(a) - rank(b) || (q ? 0 : sizeTier(a) - sizeTier(b)) || hasData(b) - hasData(a) || bySize(a, b));
     $('#count').textContent = `${list.length.toLocaleString()} match${list.length === 1 ? '' : 'es'}`;
     if (!list.length) { $('#srows').innerHTML = `<div class="empty">Nothing found for "${esc(S.sq)}". Try fewer letters, the ticker (e.g. AAPL) or the company's main name.</div>`; return; }
-    $('#srows').innerHTML = list.slice(0, S.shown).map(searchRow).join('') + (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
+    $('#srows').innerHTML = (q ? list.slice(0, S.shown).map(searchRow).join('') : tiered(list.slice(0, S.shown), searchRow)) + (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
     $('#srows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/1d`; });
     const mo = $('#more'); if (mo) mo.onclick = () => { S.shown += 50; renderSearch(); };
     Live.paint(); Live.poll();
@@ -1200,7 +1224,9 @@
 
     function wanted() {
       const s = new Set();
-      document.querySelectorAll('[data-live]').forEach(e => s.add(e.dataset.live));
+      // lists show every instrument, so only ask for prices on and near the screen (scrolling asks again)
+      const H = innerHeight;
+      document.querySelectorAll('[data-live]').forEach(e => { const b = e.getBoundingClientRect(); if (b.bottom > -H && b.top < 2 * H && b.height) s.add(e.dataset.live); });
       extra.forEach(t => s.add(t));
       return [...s];
     }
@@ -1308,6 +1334,8 @@
     }
     // extra tickers to fetch even when they are not drawn (the odds tabs need every instrument's facts)
     function want(list) { extra = list || []; }
+    let scrollT = null;
+    addEventListener('scroll', () => { clearTimeout(scrollT); scrollT = setTimeout(() => { if (!busy) poll(); else again = true; }, 400); }, { passive: true });
     function hook(fn) { onUpdate = fn; }
     return { start, poll, paint, want, hook, q, fresh: () => Date.now() - okAt < 60000, binOn: () => Bin.on() };
   })();
@@ -1339,7 +1367,7 @@
     const sc = store.get('practice', { right: 0, total: 0 });
     $('#view').innerHTML = `<p class="intro">A real past chart that stops right after a candle pattern. Guess where price went over the <b>next 5 candles</b>, then see what really happened.
       Your score: <b>${sc.right}/${sc.total}</b>${sc.total ? ` (${Math.round(sc.right / sc.total * 100)}%)` : ''}.</p><div id="pq" class="empty">Finding a chart…</div>`;
-    const pool = S.summary.rows.filter(r => r.cfd && (r.d.lq || 0) > 2e7 || !isStockLike(r));
+    const pool = S.summary.rows.filter(r => r.cfd && (lqUsd(r) || 0) > 2e7 || !isStockLike(r));
     for (let tries = 0; tries < 8; tries++) {
       const r = pool[Math.floor(Math.random() * pool.length)];
       let det; try { det = await loadDetail(r.x); } catch (e) { continue; }
