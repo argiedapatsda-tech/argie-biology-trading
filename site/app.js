@@ -1225,8 +1225,14 @@
     function wanted() {
       const s = new Set();
       // lists show every instrument, so only ask for prices on and near the screen (scrolling asks again)
+      // measure whole rows only: measuring the price inside an off-screen row (content-visibility: auto)
+      // forces the browser to lay that row out, and doing it thousands of times froze the page
       const H = innerHeight;
-      document.querySelectorAll('[data-live]').forEach(e => { const b = e.getBoundingClientRect(); if (b.bottom > -H && b.top < 2 * H && b.height) s.add(e.dataset.live); });
+      document.querySelectorAll('.rows > .row').forEach(row => {
+        const b = row.getBoundingClientRect();
+        if (b.bottom > -H && b.top < 2 * H && b.height) row.querySelectorAll('[data-live]').forEach(e => s.add(e.dataset.live));
+      });
+      document.querySelectorAll('[data-live]').forEach(e => { if (!e.closest('.rows > .row')) s.add(e.dataset.live); });  // ticker strip, instrument page
       extra.forEach(t => s.add(t));
       return [...s];
     }
