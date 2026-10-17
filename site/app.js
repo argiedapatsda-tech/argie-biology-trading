@@ -280,7 +280,7 @@
   function decBadge(dec, ctx, small) {
     const inv = ctx === 'inv';
     // CFDs say TRADE ▲ / TRADE ▼ (a trade on the price going up or down); BUY / SELL is kept for real shares
-    const W = { buy: inv ? 'BUY' : 'TRADE ▲', sell: inv ? 'SELL' : 'TRADE ▼', wait: 'WAIT', none: 'NO ODDS' }[dec.word];
+    const W = { buy: inv ? 'BUY' : 'TRADE ▲ UP', sell: inv ? 'SELL' : 'TRADE ▼ DOWN', wait: 'WAIT', none: 'NO ODDS' }[dec.word];
     const tip = { buy: inv ? 'Past moments like today were usually followed by a rise.' : 'Trade on the price going UP (the BUY button in XTB). Past moments like today were usually followed by a rise.',
       sell: inv ? 'Past moments like today were usually followed by a fall. If you own it, consider selling or protecting it with a stop.' : 'Trade on the price going DOWN (the SELL button in XTB). Past moments like today were usually followed by a fall.',
       wait: 'No clear edge: after past moments like today price went up and down about as often as normal.', none: 'Not enough past history that looked like today to count.' }[dec.word];
@@ -1016,7 +1016,7 @@
       : `${PAT[a.pid] ? PAT[a.pid][0] : a.pid} pattern at a key level on the ${TF_LABEL[a.tf] || a.tf} chart`;
     const dp = a.price ? decimalsOf(a.price) : 2;
     return `<button class="row brow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(a.x)}" data-tf="${esc(a.tf)}">
-      <div class="name"><span class="dec ${buy ? 'buy' : 'sell'} sm">${buy ? 'TRADE ▲' : 'TRADE ▼'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
+      <div class="name"><span class="dec ${buy ? 'buy' : 'sell'} sm">${buy ? 'TRADE ▲ UP' : 'TRADE ▼ DOWN'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
         <div class="faint" style="font-size:12.5px;font-weight:400">${esc(what)} · ${ago(a.at)}</div></div>
       <div class="px num">${a.price ? chartFmt(a.price, dp) : '–'}<div class="faint" style="font-size:11px;font-weight:400">price at alert</div></div>
       <div class="why">${mv != null ? `<span class="chip ${ok ? 'g' : 'r'}">Since then: ${pct(mv, 2)} · ${ok ? 'went its way' : 'went against it'}</span><span class="chip">Latest ${chartFmt(now, dp)}</span>` : '<span class="chip">No latest price</span>'}</div></button>`;
