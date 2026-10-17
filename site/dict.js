@@ -2,9 +2,9 @@
    id = link target (#/dict/<id>). Keep the language plain but exact. */
 window.DICT = [
   // ------------------------------------------------ this site
-  { id: 'probability', cat: 'This site', term: 'TRADE ▲ / TRADE ▼ / WAIT (probability)', aka: 'the word on every row',
+  { id: 'probability', cat: 'This site', term: 'TRADE ▲ / SELL ▼ / WAIT (probability)', aka: 'the word on every row',
     plain: 'The word on each row comes from counting: after past moments that looked like today on the same instrument, how often did the price go up, and how often down?',
-    more: 'Today is described by a few simple facts (for example: price above its 50-day average, RSI in the middle). We find every past moment with the same facts and count what happened next. <b>TRADE ▲</b> = it rose at least 60 times in 100, at least 5 more than on a normal day, gained on average, and passes a luck check: a trade on the price going up (the BUY button in XTB). <b>TRADE ▼</b> = the same for falls (the SELL button in XTB). <b>WAIT</b> = no clear edge. On the Forex tab, <b>WAIT ▲/▼</b> means leaning one way and getting close, and <b>NOT YET</b> means no edge at all. In the Investing section, for real shares, the words stay BUY and SELL. It is a count of the past, not a forecast, and the past can stop repeating.',
+    more: 'Today is described by a few simple facts (for example: price above its 50-day average, RSI in the middle). We find every past moment with the same facts and count what happened next. <b>TRADE ▲</b> = it rose at least 60 times in 100, at least 5 more than on a normal day, gained on average, and passes a luck check: a trade on the price going up (the BUY button in XTB). <b>SELL ▼</b> = the same for falls (the SELL button in XTB). <b>WAIT</b> = no clear edge. On the Forex tab, <b>WAIT ▲/▼</b> means leaning one way and getting close, and <b>NOT YET</b> means no edge at all. In the Investing section, for real shares, the words stay BUY and SELL. It is a count of the past, not a forecast, and the past can stop repeating.',
     ex: 'Gold today is above both averages with RSI 65. For example: of 140 past days that looked like this, gold was higher one month later 92 times (66%). On a normal day it was higher 54% of the time. 66% is above 60, 12 points above normal, and too many times to be luck, so the row says TRADE ▲.',
     see: ['base-rate', 'luck-test', 'sample-size'] },
   { id: 'base-rate', cat: 'This site', term: 'Normal (base rate)', aka: 'what usually happens',
@@ -56,7 +56,7 @@ window.DICT = [
     see: ['cfd', 'dividend', 'etf'] },
   { id: 'long-short', cat: 'Trading basics', term: 'Buy (long) and Sell (short)', aka: 'going long / going short',
     plain: 'Buy = you gain when the price rises. Sell (with a CFD) = you gain when the price falls.',
-    more: 'Selling first and buying back later is called "shorting". With real shares you cannot short; with CFDs you can. On this site CFD trades say <b>TRADE ▲</b> (tap BUY in XTB) or <b>TRADE ▼</b> (tap SELL in XTB, a short); "SELL" in Investing means sell shares you already own.',
+    more: 'Selling first and buying back later is called "shorting". With real shares you cannot short; with CFDs you can. On this site CFD trades say <b>TRADE ▲</b> (tap BUY in XTB) or <b>SELL ▼</b> (tap SELL in XTB, a short); "SELL" in Investing means sell shares you already own.',
     ex: 'You think oil will drop. You SELL an oil CFD at 92. Oil falls to 88: you gain 4 per barrel. If it rises to 95 instead, you lose 3 per barrel.',
     see: ['cfd'] },
   { id: 'stop-loss', cat: 'Trading basics', term: 'Stop loss', aka: 'SL',
