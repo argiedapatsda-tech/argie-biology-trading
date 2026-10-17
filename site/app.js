@@ -395,7 +395,7 @@
 
   function viewBoard() {
     S.btf = S.btf || store.get('btf', '1d');
-    S.showN = { go: 30, lean: 20, wait: 12, none: 8 };
+    S.showN = { up: 20, down: 20, lean: 20, wait: 12, none: 8 };
     const closed = weekend(), fb = filterBar('cfd', renderBoard);
     $('#view').innerHTML = `
       <p class="intro">Every CFD with one word: <b class="up">TRADE ▲</b> (on the price going up), <b class="down">SELL ▼</b> (on the price going down) or <b>WAIT</b>. The word comes from probability: what price did after past moments that looked like today on the same instrument
@@ -413,16 +413,18 @@
   function renderBoard() {
     const box = $('#board'); if (!box) return;
     const tf = S.btf, ctx = TF_CTX[tf];
-    const groups = { go: [], lean: [], wait: [], none: [] };
+    const groups = { up: [], down: [], lean: [], wait: [], none: [] };
     for (const r of sectionPool('cfd')) {
       const t = tfData(r, tf), v = verdict(t), dec = decide(r, ctx);
-      const g = dec.word === 'buy' || dec.word === 'sell' ? 'go' : !hasData(r) ? 'none' : dirOf(v) ? 'lean' : dec.word === 'none' && !t ? 'none' : 'wait';
+      const g = dec.word === 'buy' ? 'up' : dec.word === 'sell' ? 'down' : !hasData(r) ? 'none' : dirOf(v) ? 'lean' : dec.word === 'none' && !t ? 'none' : 'wait';
       groups[g].push({ r, t, v, dec, z: dec.c ? dec.c.z : 0, str: t && t.b != null ? Math.max(t.b, t.s) : 0 });
     }
     const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.z - a.z) || (b.str - a.str) || bySize(a.r, b.r);
     Object.values(groups).forEach(g => g.sort(order));
     const SEC = {
-      go: ['Trade now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
+      // green and red apart, so a red SELL never sits under a "trade" heading
+      up: ['<span class="up">▲ Trade up now</span>', '', `Green TRADE ▲ UP = a trade on the price going UP (tap BUY in XTB). Price rose at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
+      down: ['<span class="down">▼ Sell now</span>', '', `Red SELL ▼ = a trade on the price going DOWN, you gain when it falls (tap SELL in XTB). Price fell at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
       lean: ['👀 Signals point one way, odds not there yet', 'warn', 'The chart signals lean up or down, but in the past this look did not win often enough. Watch, do not rush.'],
       wait: ['⏸ Wait', '', 'No clear edge: price went up and down about as often as normal. Most traders skip these.'],
       none: ['No data yet', 'faint', 'No price history from our data source yet (new, renamed or delisted). The live price and TradingView chart may still work.'],
