@@ -256,3 +256,9 @@ a.dl:hover{color:var(--accent)}
 .tierhead.t1{border-left-color:var(--up)} .tierhead.t2{border-left-color:var(--warn)} .tierhead.t3{border-left-color:var(--faint)}
 /* long lists (every instrument): the browser skips drawing rows far off screen */
 .rows > .row{content-visibility:auto;contain-intrinsic-size:auto 120px}
+/* Forex tab: market clock */
+.fxclock{margin:0 0 12px;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.fxstate{font-weight:800;font-size:16px;letter-spacing:.02em}
+.fxstate.open{color:var(--up)} .fxstate.closed{color:var(--warn)}
+.fxsess{display:flex;flex-wrap:wrap;gap:6px}
+.dec.wait .up{color:var(--up)} .dec.wait .down{color:var(--down)}

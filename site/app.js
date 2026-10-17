@@ -76,9 +76,40 @@
   const tvLink = x => 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSym(x) || x);
   const inMode = r => isTV() || !r.tvo;   // Thai SET stocks only exist in TradingView mode
   const tradable = r => isTV() || r.cfd;  // XTB lists are about CFDs; TradingView lists use everything
-  // Forex, indices and commodities close from Friday 22:00 to Sunday 21:00 UTC; crypto never closes
-  const weekend = () => { const n = new Date(), d = n.getUTCDay(), h = n.getUTCHours(); return d === 6 || (d === 0 && h < 21) || (d === 5 && h >= 22); };
+  // Forex (and XTB's index / commodity CFDs) trade from Sunday 17:00 to Friday 17:00 New York time,
+  // which moves with US summer time (Monday about 04:00 or 05:00 in Thailand); crypto never closes
+  const ZONE_FMT = {};
+  function clockIn(zone, t) {
+    const f = ZONE_FMT[zone] || (ZONE_FMT[zone] = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }));
+    const p = {}; f.formatToParts(t).forEach(x => { p[x.type] = x.value; });
+    return { d: p.weekday, h: +p.hour + +p.minute / 60 };
+  }
+  const fxOpenAt = t => { const { d, h } = clockIn('America/New_York', t); return !(d === 'Sat' || (d === 'Fri' && h >= 17) || (d === 'Sun' && h < 17)); };
+  let wkAt = 0, wk = false;
+  const weekend = () => { if (Date.now() - wkAt > 30000) { wkAt = Date.now(); wk = !fxOpenAt(new Date()); } return wk; };
   const isOpen = r => r.ty === 'Crypto' || !weekend();
+  // the four forex sessions in their own city's working hours (weekdays only)
+  const SESSIONS = [['Sydney', 'Australia/Sydney', 7, 16], ['Tokyo', 'Asia/Tokyo', 9, 18], ['London', 'Europe/London', 8, 17], ['New York', 'America/New_York', 8, 17]];
+  const sessionOpenAt = (s, t) => { if (!fxOpenAt(t)) return false; const { d, h } = clockIn(s[1], t); return d !== 'Sat' && d !== 'Sun' && h >= s[2] && h < s[3]; };
+  // the next moment test(t) flips, looking ahead in 15-minute steps (up to 4 days)
+  function nextFlip(test) {
+    const now = Date.now(), was = test(new Date(now));
+    for (let m = 15; m <= 4 * 1440; m += 15) {
+      const t = new Date(Math.ceil(now / 9e5) * 9e5 + (m - 15) * 6e4);
+      if (test(t) !== was) return t;
+    }
+    return null;
+  }
+  const myZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ''; } })();
+  const clockName = myZone === 'Asia/Bangkok' ? 'Thai time' : 'your time';
+  function whenText(t, short) {
+    if (!t) return '–';
+    const now = new Date(), days = Math.round((new Date(t.toDateString()) - new Date(now.toDateString())) / 864e5);
+    const hm = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const day = days === 0 ? 'today' : days === 1 ? 'tomorrow' : t.toLocaleDateString([], { weekday: 'long' });
+    const mins = Math.round((t - now) / 6e4), left = mins < 60 ? mins + ' min' : mins < 1440 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : Math.floor(mins / 1440) + ' day ' + Math.floor(mins % 1440 / 60) + ' h';
+    return short ? `${days === 0 ? '' : day + ' '}${hm}` : `${day} ${hm} (${clockName}) · in ${left}`;
+  }
 
   // ---------------------------------------------------------------- boot
   async function boot() {
@@ -127,7 +158,7 @@
       if (sum.generated === S.summary.generated) return;
       S.summary = unslim(sum); showUpdated();
       S.odds = await fetchJSON('data/odds.json?t=' + Date.now()).catch(() => S.odds);
-      if ($('#board')) renderBoard(); else if ($('#rows')) renderRows(); else if ($('#oddsList')) { S.osig = ''; renderProb(); } else if ($('#srows')) renderSearch();
+      if ($('#board')) renderBoard(); else if ($('#fxlist')) { S.fxsig = ''; renderForex(); } else if ($('#rows')) renderRows(); else if ($('#oddsList')) { S.osig = ''; renderProb(); } else if ($('#srows')) renderSearch();
     } catch (e) { /* keep showing what we have */ }
   }
 
@@ -248,8 +279,10 @@
 
   function decBadge(dec, ctx, small) {
     const inv = ctx === 'inv';
-    const W = { buy: 'BUY', sell: inv ? 'SELL' : 'SELL', wait: 'WAIT', none: 'NO ODDS' }[dec.word];
-    const tip = { buy: 'Past moments like today were usually followed by a rise.', sell: inv ? 'Past moments like today were usually followed by a fall. If you own it, consider selling or protecting it with a stop.' : 'Past moments like today were usually followed by a fall. A CFD sell gains when price falls.',
+    // CFDs say TRADE ▲ / TRADE ▼ (a trade on the price going up or down); BUY / SELL is kept for real shares
+    const W = { buy: inv ? 'BUY' : 'TRADE ▲', sell: inv ? 'SELL' : 'TRADE ▼', wait: 'WAIT', none: 'NO ODDS' }[dec.word];
+    const tip = { buy: inv ? 'Past moments like today were usually followed by a rise.' : 'Trade on the price going UP (the BUY button in XTB). Past moments like today were usually followed by a rise.',
+      sell: inv ? 'Past moments like today were usually followed by a fall. If you own it, consider selling or protecting it with a stop.' : 'Trade on the price going DOWN (the SELL button in XTB). Past moments like today were usually followed by a fall.',
       wait: 'No clear edge: after past moments like today price went up and down about as often as normal.', none: 'Not enough past history that looked like today to count.' }[dec.word];
     let sub = '';
     if (dec.c) sub = `${dec.word === 'buy' ? 'rose' : 'fell'} ${Math.round(dec.c.p)}% of the time · ${dec.c.short || dec.c.label}${inv && dec.word === 'sell' ? ' · if you own it' : ''}`;
@@ -264,7 +297,7 @@
     inv: [['all', 'All'], ['Stocks', 'Stocks'], ['ETFs', 'ETFs']],
   };
   const SUBS = {
-    cfd: [['now', 'Overview'], ['buy', '▲ Good for buying now'], ['sell', '▼ Good for selling now'], ['strong', 'Strong signals'], ['avoid', 'Avoid for now']],
+    cfd: [['now', 'Overview'], ['forex', '💱 Forex'], ['buy', '▲ Trade up now'], ['sell', '▼ Trade down now'], ['strong', 'Strong signals'], ['avoid', 'Avoid for now']],
     inv: [['buy', '▲ Good for buying now'], ['sell', '▼ Time to sell'], ['strong', 'Strong for investing'], ['weak', 'Weak for investing']],
   };
   const SEC_NAME = { cfd: 'CFD trading', inv: 'Investing' };
@@ -338,6 +371,7 @@
     S.sec = sec; S.sub = sub; S.shown = ALL;
     navTabs(sec, sub);
     if (sec === 'cfd' && sub === 'now') return viewBoard();
+    if (sec === 'cfd' && sub === 'forex') return viewForex();
     if (sub === 'buy' || sub === 'sell') return viewProb(sec, sub);
     return viewList(sec, sub);
   }
@@ -364,7 +398,7 @@
     S.showN = { go: 30, lean: 20, wait: 12, none: 8 };
     const closed = weekend(), fb = filterBar('cfd', renderBoard);
     $('#view').innerHTML = `
-      <p class="intro">Every CFD with one word: <b class="up">BUY</b>, <b class="down">SELL</b> or <b>WAIT</b>. The word comes from probability: what price did after past moments that looked like today on the same instrument
+      <p class="intro">Every CFD with one word: <b class="up">TRADE ▲</b> (on the price going up), <b class="down">TRADE ▼</b> (on the price going down) or <b>WAIT</b>. The word comes from probability: what price did after past moments that looked like today on the same instrument
         (${dl('probability', 'how this works')}). Choose how long you plan to keep the trade open.
         ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Other markets show Friday\'s close and reopen Sunday night (UTC).</span>' : ''}</p>
       ${fb.html}
@@ -388,7 +422,7 @@
     const order = (a, b) => (isOpen(b.r) - isOpen(a.r)) || (b.z - a.z) || (b.str - a.str) || bySize(a.r, b.r);
     Object.values(groups).forEach(g => g.sort(order));
     const SEC = {
-      go: ['BUY or SELL now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
+      go: ['Trade now', '', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than on a normal day, and it is unlikely to be luck. Strongest evidence first.`],
       lean: ['👀 Signals point one way, odds not there yet', 'warn', 'The chart signals lean up or down, but in the past this look did not win often enough. Watch, do not rush.'],
       wait: ['⏸ Wait', '', 'No clear edge: price went up and down about as often as normal. Most traders skip these.'],
       none: ['No data yet', 'faint', 'No price history from our data source yet (new, renamed or delisted). The live price and TradingView chart may still work.'],
@@ -431,8 +465,8 @@
     if (dec.word === 'sell' && d === 'up') return 'The chart signals point up right now, against the odds. Smaller size, and use the stop.';
     if ((dec.word === 'buy' || dec.word === 'sell') && dec.c && dec.c.stop && dec.c.typ && Math.abs(dec.c.typ) / dec.c.stop < 0.5)
       return `The safe stop is ${(dec.c.stop / Math.abs(dec.c.typ)).toFixed(1)}× bigger than a typical ${dec.word === 'buy' ? 'rise' : 'fall'}, so one loss can cancel several wins.`;
-    if (dec.word === 'buy' && t && t.r > 75) return `Already up a lot lately (RSI ${Math.round(t.r)}): buying now is buying late.`;
-    if (dec.word === 'sell' && t && t.r < 25) return `Already down a lot lately (RSI ${Math.round(t.r)}): selling now is selling late.`;
+    if (dec.word === 'buy' && t && t.r > 75) return `Already up a lot lately (RSI ${Math.round(t.r)}): getting in now is getting in late.`;
+    if (dec.word === 'sell' && t && t.r < 25) return `Already down a lot lately (RSI ${Math.round(t.r)}): getting in now is getting in late.`;
     if (dec.word === 'wait' && d) return `The chart signals lean ${d}, but in the past that look did not win often enough here.`;
     return '';
   }
@@ -451,6 +485,145 @@
       ${priceBox(r)}
       <div class="why col">${reasonHTML(r, dec, t, tf, dirOf(v) === 'down' ? 'sell' : 'buy')}</div></button>`;
   }
+
+  // ---------------------------------------------------------------- Forex: trade now / wait / not yet
+  // The same odds as the rest of the site, only forex pairs, with the market clock on top.
+  const FX_MAIN = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD'];
+  const FX_MAJOR = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+  const fxClass = x => FX_MAJOR.includes(x) ? 0 : FX_MAIN.includes(x.slice(0, 3)) && FX_MAIN.includes(x.slice(3, 6)) ? 1 : 2;
+  const FX_TAG = ['Major pair · smallest spread', 'Cross pair', 'Exotic pair · wide spread, sudden jumps'];
+  const NEAR = 5;  // within 5 points of the TRADE rule, and above normal, counts as "getting close"
+  const hourlyOdds = dec => dec.from !== 'days';  // hourly odds have no minimum-move rule
+
+  // WAIT on this tab = the odds lean one way and are close to the TRADE rule, but not there yet
+  function nearOf(r, ctx, dec) {
+    let ks = ctx === 'days' ? [0, 1] : [+ctx[1]], evs = null;
+    if (dec.from !== 'days' && ctx[0] === 'h') { const b = oddsEval(r, 'buy', ks); if (b.st) evs = [b, oddsEval(r, 'sell', ks)]; }
+    if (!evs) { ks = [0, 1]; const b = dailyEval(r, 'buy', ks, WIN_MIN); if (!b) return null; evs = [b, dailyEval(r, 'sell', ks, WIN_MIN)]; }
+    let best = null;
+    evs.forEach((ev, i) => ev.cells.forEach(c => {
+      if (!c || !ks.includes(c.k) || c.base == null || cashLike(r)) return;
+      if (c.p >= WIN_MIN - NEAR && c.p >= c.base + 2 && c.fav > 0 && (!best || c.p - c.base > best.c.p - best.c.base)) best = { side: i ? 'sell' : 'buy', c };
+    }));
+    return best;
+  }
+
+  function fxClockHTML() {
+    if (weekend()) {
+      return `<div class="fxstate closed">● Forex is CLOSED for the weekend</div>
+        <div>Reopens <b>${whenText(nextFlip(fxOpenAt))}</b>. Until then prices do not move: what you see is Friday's close. Only crypto trades on weekends.</div>
+        <div class="faint">The words below use Friday's last chart. Check again after it reopens: the first hour after a weekend can jump (a ${dl('gap', 'gap')}) and the words can change.</div>`;
+    }
+    const now = new Date(), on = SESSIONS.map(s => sessionOpenAt(s, now));
+    const chips = SESSIONS.map((s, i) => `<span class="chip ${on[i] ? 'g' : ''}">${on[i] ? '● ' + s[0] + ' open · closes ' : s[0] + ' opens '}${whenText(nextFlip(t => sessionOpenAt(s, t)), true)}</span>`).join('');
+    const busy = on[2] && on[3];
+    return `<div class="fxstate open">● Forex is OPEN</div><div class="fxsess">${chips}</div>
+      <div class="faint">${busy ? '<b class="up">Busiest hours right now</b> (London and New York both open): the smallest spreads of the day. ' : 'Busiest, cheapest hours: when London and New York are both open. '}
+        Closes for the weekend ${whenText(nextFlip(fxOpenAt))}.</div>`;
+  }
+
+  function viewForex() {
+    S.btf = S.btf || store.get('btf', '1d');
+    S.fxq = S.fxq || '';
+    const n = S.summary.rows.filter(r => r.ty === 'Forex' && inMode(r) && tradable(r)).length;
+    $('#view').innerHTML = `
+      <div id="fxclock" class="card fxclock">${fxClockHTML()}</div>
+      <p class="intro">All <b>${n}</b> forex pairs on XTB, sorted into <b class="up">TRADE</b> now, <b>WAIT</b> (getting close, watch it) and <b>NOT YET</b> (no edge).
+        The same counting as the rest of the site: today's chart is compared with every past moment on the same pair that looked like it (${dl('probability', 'how this works')}).
+        <b class="up">TRADE ▲</b> = a trade on the price going up (XTB button BUY). <b class="down">TRADE ▼</b> = going down (XTB button SELL).</p>
+      <div class="filters"><span class="faint" style="font-size:13px">I will hold the trade for</span>
+        <div class="seg wrap" role="group" aria-label="Holding time">${BTFS.map(tf => `<button data-btf="${tf}" class="${S.btf === tf ? 'on' : ''}">${HOLD[tf]}</button>`).join('')}</div></div>
+      <div class="filters"><input class="fq" id="fxq" type="search" placeholder="Search a pair (e.g. EURUSD, yen, baht)…" aria-label="Search a pair" value="${esc(S.fxq)}"></div>
+      <div id="fxlist"></div>`;
+    document.querySelectorAll('[data-btf]').forEach(b => b.onclick = () => { S.btf = b.dataset.btf; store.set('btf', S.btf); viewForex(); });
+    $('#fxq').oninput = e => { S.fxq = e.target.value; S.fxsig = ''; renderForex(); };
+    if (TF_CTX[S.btf][0] === 'h' && S.odds && S.odds.rows) {
+      // the hourly look is re-checked live, so every pair's facts are fetched even when off screen
+      Live.want(S.summary.rows.filter(r => r.ty === 'Forex' && S.odds.rows[r.x]).map(r => tvLive(r.x)).filter(Boolean));
+      Live.hook(() => { if ($('#fxlist')) renderForex(); });
+    }
+    S.fxsig = '';
+    renderForex();
+    Live.poll();
+  }
+
+  function renderForex() {
+    const box = $('#fxlist'); if (!box) return;
+    const tf = S.btf, ctx = TF_CTX[tf], m = matcher(S.fxq);
+    const G = { now: [], wait: [], not: [], none: [] };
+    for (const r of S.summary.rows) {
+      if (r.ty !== 'Forex' || !inMode(r) || !tradable(r) || !m(r)) continue;
+      const dec = decide(r, ctx);
+      if (!hasData(r) || dec.word === 'none') { G.none.push({ r, dec }); continue; }
+      if (dec.word === 'buy' || dec.word === 'sell') { G.now.push({ r, dec, z: dec.c.z }); continue; }
+      const near = nearOf(r, ctx, dec);
+      (near ? G.wait : G.not).push({ r, dec, near, z: near ? near.c.p - near.c.base : 0 });
+    }
+    // majors first (cheapest to trade), then the strongest evidence
+    const order = (a, b) => (fxClass(a.r.x) - fxClass(b.r.x)) || ((b.z || 0) - (a.z || 0)) || a.r.x.localeCompare(b.r.x);
+    Object.values(G).forEach(g => g.sort(order));
+    const sig = Object.entries(G).map(([k, g]) => k + ':' + g.map(o => o.r.x + (o.dec.word || '') + (o.near ? o.near.side + o.near.c.k : '') + (o.dec.c ? o.dec.c.k : '')).join(',')).join('|') + '#' + tf;
+    if (sig === S.fxsig) { Live.paint(); return; }
+    S.fxsig = sig;
+    const closed = weekend(), hourly = ctx[0] === 'h';
+    const SEC = {
+      now: ['✅ Trade now', 'up', `Price went this way at least ${WIN_MIN} times in 100 after past moments like today, at least ${MARGIN} more than normal, and it is unlikely to be luck.${closed ? ' <b class="warn">The market is closed: you cannot open these until it reopens, and they may change by then.</b>' : ''}`],
+      wait: ['⏳ Wait · getting close', 'warn', `Leaning one way (${WIN_MIN - NEAR}+ in 100 and above normal) but not strong enough for TRADE yet. Watch these: the word can change as price moves${hourly && !closed ? ' (re-checked by itself every 15 seconds)' : ''}.`],
+      not: ['⏸ Not yet · no edge', '', 'Price went up and down about as often as normal after moments like this. Nothing to do here for now.'],
+      none: ['No data yet', 'faint', 'No price history from our data source for these. The live price and TradingView chart may still work.'],
+    };
+    const html = Object.entries(G).filter(([, g]) => g.length).map(([k, g]) => {
+      const [title, cls, sub] = SEC[k];
+      return `<section class="bsec"><h3 class="${cls}">${title} <span class="cnt">${g.length}</span></h3><p class="faint bsub">${sub}</p>
+        <div class="rows">${g.map(fxRow).join('')}</div></section>`;
+    }).join('');
+    box.innerHTML = html || '<div class="empty">No pair matches. Try another search.</div>';
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${tf}`; });
+    Live.paint(); Live.poll();
+  }
+
+  function fxRow({ r, dec, near }) {
+    const tf = S.btf, ctx = TF_CTX[tf], lt = tvLive(r.x), q = lt && Live.q[lt];
+    const price = (q && q.p) || (r.live ? r.live.p : r.d && r.d.p), dp = price ? decimalsOf(price) : 4;
+    const lvl = f => price ? `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>` : '–';
+    let badge, why, levels = '', dir = 'flat';
+    if (dec.word === 'buy' || dec.word === 'sell') {
+      const up = dec.word === 'buy', b = dec.c, c = cautionText(r, dec, tfData(r, tf), tf);
+      const stop = Math.max(b.stop || 0, 0.05), fs = up ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + (b.typ || 0) / 100;
+      dir = up ? 'up' : 'down';
+      badge = decBadge(dec, ctx, true);
+      why = `<div class="reason">${reasonText(dec)}</div>${c ? `<div class="caution">⚠ Careful: ${c}</div>` : ''}`;
+      levels = `<div class="olevels"><div>In XTB tap <b class="${dir}">${up ? 'BUY' : 'SELL'}</b>, for ${b.short}:</div>
+        <div><span class="down">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${up ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
+        <div><span class="up">Typical move</span> to ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}) · not a promise</span></div></div>`;
+    } else if (near) {
+      const up = near.side === 'buy';
+      badge = `<span class="dec wait sm" title="Leaning ${up ? 'up' : 'down'}, close to a TRADE but not there yet">WAIT <span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'}</span></span>`;
+      // say exactly which part of the TRADE rule is still missing
+      const c = near.c, miss = [];
+      if (c.p < WIN_MIN) miss.push(`at least ${WIN_MIN} of 100`);
+      if (c.p < c.base + MARGIN) miss.push(`at least ${Math.round(c.base) + MARGIN} of 100 (${MARGIN} more than normal)`);
+      if (!miss.length && c.z < Z_MIN) miss.push(`more past examples: with only ${c.n} similar moments this could still be ${dl('luck-test', 'luck')}`);
+      if (!miss.length && c.typ != null && Math.abs(c.typ) < MIN_MOVE && !hourlyOdds(dec)) miss.push(`a bigger typical move: ${pct(c.typ, 2)} is too small to be worth the spread`);
+      if (!miss.length) miss.push('a clearer edge');
+      why = `<div class="reason">Leaning ${up ? 'up' : 'down'}: price was ${up ? 'higher' : 'lower'} ${c.short.replace('about ', '')} later in <b>${Math.round(c.p)} of 100</b> moments like this (on a normal day: ${Math.round(c.base)}).
+        Still needs ${miss.join(' and ')}. Watch, do not trade yet.</div>`;
+    } else if (dec.word === 'wait') {
+      badge = '<span class="dec wait sm" title="No edge right now">NOT YET</span>';
+      why = `<div class="reason">${reasonText(dec)}</div>`;
+    } else {
+      badge = decBadge(dec, ctx, true);
+      why = `<div class="reason">${reasonText(dec)}</div>`;
+    }
+    const src = dec.from === 'days' && ctx !== 'days' && dec.word !== 'none' ? ' · odds from the Daily chart (no hourly odds for this one)' : '';
+    return `<button class="row brow b-${dir}" data-x="${esc(r.x)}">
+      <div class="name"><div class="decrow">${badge}<span class="rname">${esc(r.n)}</span><span class="sym">${esc(shownSym(r))}</span></div>
+        <div class="faint meta">${FX_TAG[fxClass(r.x)]}${src}</div></div>
+      ${priceBox(r)}
+      <div class="why col">${why}${levels}</div></button>`;
+  }
+  // keep the market clock current while the Forex tab is open
+  setInterval(() => { const c = $('#fxclock'); if (c) c.innerHTML = fxClockHTML(); }, 30000);
 
   // ---------------------------------------------------------------- Good for buying / selling now
   // "The last times it looked like this". Hourly: each instrument's 1H chart described by 4 facts
@@ -523,7 +696,7 @@
     const what = inv ? (buy ? 'a RISE over the next 1–3 months' : 'a FALL over the next 1–3 months') : (buy ? 'a RISE' : 'a FALL');
     $('#view').innerHTML = `
       <p class="intro"><b class="${buy ? 'up' : 'down'}">Where past moments like today were usually followed by ${what}.</b>
-        ${!inv && !buy ? 'A CFD sell gains when the price falls.' : ''}
+        ${!inv ? (buy ? 'TRADE ▲ = a trade on the price going up (in XTB you tap BUY).' : 'TRADE ▼ = a trade on the price going down, you gain when it falls (in XTB you tap SELL).') : ''}
         ${inv && !buy ? 'For shares you already own: these usually fell afterwards, so think about selling or protecting them with a ' + dl('stop-loss', 'stop loss') + '. (You cannot sell shares you do not own.)' : ''}
         <span class="warn">This is what happened before, not a promise. ${inv ? '' : 'Set the stop loss shown in XTB when you open the trade.'}</span>
         ${closed && !inv ? '<br><span class="warn">Weekend: only crypto is trading. Other markets are listed last.</span>' : ''}</p>
@@ -583,13 +756,13 @@
       || (sizeTier(a.r) === 0 && isStockLike(a.r) && isStockLike(b.r) ? bySize(a.r, b.r) : 0)
       || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
     const liveTxt = !hours ? `From each instrument's last scan` : Live.fresh() ? `Facts checked live for ${cnt.live} instruments` : 'Live check not reachable - using the last scan (' + ago(S.odds.generated) + ')';
-    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${side === 'buy' ? 'good for buying' : inv ? 'to sell' : 'good for selling'} now · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
+    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${inv ? (side === 'buy' ? 'good for buying' : 'to sell') : side === 'buy' ? 'to trade up' : 'to trade down'} now · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
     const sig = good.slice(0, S.shown).map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh() + '#' + S.shown;
     if (sig === S.osig) { Live.paint(); return; }
     S.osig = sig;
     const shown = good.slice(0, S.shown);
     box.innerHTML = good.length ? tiered(shown, g => probRow(g, sec, side), g => g.r) + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : '')
-      : `<div class="empty">Nothing is clearly ${side === 'buy' ? 'good for buying' : 'good for selling'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
+      : `<div class="empty">Nothing is clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'worth a trade up' : 'worth a trade down'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
       That is normal. It changes as prices move${hours ? ', and this page re-checks by itself every 15 seconds' : ''}.</div>`;
     box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${hours ? '1h' : '1d'}`; });
     const m = $('#more'); if (m) m.onclick = () => { S.shown += 50; renderProb(); };
@@ -610,7 +783,7 @@
       ${priceBox(r, `<div class="faint" style="font-size:11px;font-weight:400">${lt ? (lt.startsWith('BINANCE:') ? 'live · every second' : 'live price') : 'last scan price'}</div>`)}
       <div class="why col">${reasonHTML(r, dec, t, null, side)}</div>
       <div class="olevels">
-        <div>${inv && !buy ? 'If you own it' : `If you ${buy ? 'buy' : 'sell'}`}, for ${b.short}:</div>
+        <div>${inv ? (buy ? 'If you buy' : 'If you own it') : `If you trade ${buy ? '▲ up (XTB button: BUY)' : '▼ down (XTB button: SELL)'}`}, for ${b.short}:</div>
         <div><span class="down">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${buy ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
         <div><span class="up">Typical ${buy ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}) · not a promise</span></div>
       </div>${extra}
@@ -620,8 +793,8 @@
   // ---------------------------------------------------------------- simple lists (strong / weak / avoid)
   const LISTS = {
     'cfd/strong': {
-      intro: () => `Instruments where several chart signals line up right now (signal score 70+ out of 100). <b>Buy side</b> = upward signals, <b>Sell side</b> = downward signals.
-        Signals are not the same as odds: the word on each row (BUY / SELL / WAIT) says whether moments like this actually worked before. Daily and Weekly cover everything; 4H / 1H only the fast-watch list.`,
+      intro: () => `Instruments where several chart signals line up right now (signal score 70+ out of 100). <b>Up side</b> = upward signals, <b>Down side</b> = downward signals.
+        Signals are not the same as odds: the word on each row (TRADE ▲ / TRADE ▼ / WAIT) says whether moments like this actually worked before. Daily and Weekly cover everything; 4H / 1H only the fast-watch list.`,
       filter: r => { const t = tfData(r, S.ctf); return t && (S.side === 'buy' ? t.b >= 70 : t.s >= 70); },
       sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || bySize(a, b); },
     },
@@ -647,7 +820,7 @@
     const key = sec + '/' + sub, T = LISTS[key];
     const fb = filterBar(sec, renderRows);
     const extra = key === 'cfd/strong' ? `<div class="filters">
-      <div class="seg" role="group" aria-label="Side"><button data-side="buy" class="${S.side === 'buy' ? 'on' : ''}">▲ Buy side</button><button data-side="sell" class="${S.side === 'sell' ? 'on' : ''}">▼ Sell side</button></div>
+      <div class="seg" role="group" aria-label="Side"><button data-side="buy" class="${S.side === 'buy' ? 'on' : ''}">▲ Up side</button><button data-side="sell" class="${S.side === 'sell' ? 'on' : ''}">▼ Down side</button></div>
       <div class="seg" role="group" aria-label="Chart">${['1h', '4h', '1d', '1wk'].map(tf => `<button data-ctf="${tf}" class="${S.ctf === tf ? 'on' : ''}">${TF_LABEL[tf]}</button>`).join('')}</div></div>` : '';
     $('#view').innerHTML = `<p class="intro">${T.intro()}</p>${fb.html}${extra}
       <div class="countbar"><span id="count" class="faint"></span><button class="copy" id="export" title="Download this list as a file you can import into a TradingView watchlist">⬇ TradingView watchlist</button></div>
@@ -839,11 +1012,11 @@
 
   function alertRow({ a, r, now, mv, ok }) {
     const buy = a.side === 'buy';
-    const what = a.kind === 'setup' ? `${buy ? 'Buy' : 'Sell'}-side signal score reached ${a.score} on the ${TF_LABEL[a.tf] || a.tf} chart`
+    const what = a.kind === 'setup' ? `${buy ? 'Up' : 'Down'}-side signal score reached ${a.score} on the ${TF_LABEL[a.tf] || a.tf} chart`
       : `${PAT[a.pid] ? PAT[a.pid][0] : a.pid} pattern at a key level on the ${TF_LABEL[a.tf] || a.tf} chart`;
     const dp = a.price ? decimalsOf(a.price) : 2;
     return `<button class="row brow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(a.x)}" data-tf="${esc(a.tf)}">
-      <div class="name"><span class="dec ${buy ? 'buy' : 'sell'} sm">${buy ? 'BUY' : 'SELL'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
+      <div class="name"><span class="dec ${buy ? 'buy' : 'sell'} sm">${buy ? 'TRADE ▲' : 'TRADE ▼'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
         <div class="faint" style="font-size:12.5px;font-weight:400">${esc(what)} · ${ago(a.at)}</div></div>
       <div class="px num">${a.price ? chartFmt(a.price, dp) : '–'}<div class="faint" style="font-size:11px;font-weight:400">price at alert</div></div>
       <div class="why">${mv != null ? `<span class="chip ${ok ? 'g' : 'r'}">Since then: ${pct(mv, 2)} · ${ok ? 'went its way' : 'went against it'}</span><span class="chip">Latest ${chartFmt(now, dp)}</span>` : '<span class="chip">No latest price</span>'}</div></button>`;
@@ -991,7 +1164,7 @@
     const target = side === 'buy' ? price + 2 * (price - stop) : price - 2 * (stop - price);
     return `<div class="card plan" style="grid-column:1/-1"><h3>Plan a trade <small>how big, and where to get out</small></h3>
       <div class="pgrid">
-        <label>Side<select id="pSide"><option value="buy" ${side === 'buy' ? 'selected' : ''}>▲ Buy</option><option value="sell" ${side === 'sell' ? 'selected' : ''}>▼ Sell (CFD)</option></select></label>
+        <label>Side<select id="pSide"><option value="buy" ${side === 'buy' ? 'selected' : ''}>▲ Trade up (XTB: BUY)</option><option value="sell" ${side === 'sell' ? 'selected' : ''}>▼ Trade down (XTB: SELL)</option></select></label>
         <label>My account (${esc(row.cur || 'same currency')})<input id="pBal" type="number" min="0" step="any" value="${p.bal}"></label>
         <label>Risk per trade (%)<input id="pRisk" type="number" min="0.1" max="10" step="0.1" value="${p.risk}"></label>
         <label>Entry price<input id="pEntry" type="number" step="any" value="${price.toFixed(dp)}"></label>
@@ -1010,7 +1183,7 @@
       store.set('plan', { bal, risk });
       const per = side === 'buy' ? e - s : s - e, gain = side === 'buy' ? t - e : e - t;
       if (!(bal > 0 && risk > 0 && e > 0 && per > 0)) {
-        $('#pOut').innerHTML = `<span class="warn">${per <= 0 && e > 0 ? `For a ${side} the stop loss must be ${side === 'buy' ? 'below' : 'above'} the entry price.` : 'Fill in every box.'}</span>`;
+        $('#pOut').innerHTML = `<span class="warn">${per <= 0 && e > 0 ? `For a trade ${side === 'buy' ? 'up' : 'down'} the stop loss must be ${side === 'buy' ? 'below' : 'above'} the entry price.` : 'Fill in every box.'}</span>`;
         return;
       }
       const atRisk = bal * risk / 100, units = atRisk / per, value = units * e, rr = gain / per, dp = decimalsOf(e);
@@ -1139,16 +1312,16 @@
     const li = parts => parts.map(p => `<li><span class="ic">${p.ok ? '✅' : p.penalty ? '⚠️' : '▫️'}</span><span class="${p.ok ? '' : 'faint'}">${esc(p.text)}</span><span class="pts">${p.pts > 0 ? '+' : ''}${p.pts}</span></li>`).join('');
     const b = T.bull[T.bull.length - (T.closed ? 1 : 2)], s = T.bear[T.bear.length - (T.closed ? 1 : 2)];
     return `<div class="card"><h3>Signal score <small>0–100, alerts at 70+ · ${dl('signal-score', 'what is this?')}</small></h3>
-      <div class="bigscore"><div><span class="up">▲ Buy side</span><b class="up num">${b ?? '–'}</b></div><div><span class="down">▼ Sell side</span><b class="down num">${s ?? '–'}</b></div></div>
-      <details open><summary class="muted" style="cursor:pointer">Why (buy side)</summary><ul class="checks" style="margin-top:8px">${li(T.parts.bull)}</ul></details>
-      <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">Why (sell side)</summary><ul class="checks" style="margin-top:8px">${li(T.parts.bear)}</ul></details></div>`;
+      <div class="bigscore"><div><span class="up">▲ Up side</span><b class="up num">${b ?? '–'}</b></div><div><span class="down">▼ Down side</span><b class="down num">${s ?? '–'}</b></div></div>
+      <details open><summary class="muted" style="cursor:pointer">Why (up side)</summary><ul class="checks" style="margin-top:8px">${li(T.parts.bull)}</ul></details>
+      <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">Why (down side)</summary><ul class="checks" style="margin-top:8px">${li(T.parts.bear)}</ul></details></div>`;
   }
 
   function pastCard(T, tf) {
     const one = (bt, side) => {
-      if (!bt.n) return `<p>The ${side} score has never crossed 70 here, so there is no record.</p>`;
+      if (!bt.n) return `<p>The ${side === 'buy' ? 'up' : 'down'}-side score has never crossed 70 here, so there is no record.</p>`;
       const w = side === 'buy' ? 'higher' : 'lower';
-      return `<p><b class="${side === 'buy' ? 'up' : 'down'}">${side === 'buy' ? '▲ Buy' : '▼ Sell'} signal</b> fired <b>${bt.n}</b> times. ${bt.horizon} candles later price was ${w} <b>${bt.win}%</b> of the time
+      return `<p><b class="${side === 'buy' ? 'up' : 'down'}">${side === 'buy' ? '▲ Up' : '▼ Down'} signal</b> fired <b>${bt.n}</b> times. ${bt.horizon} candles later price was ${w} <b>${bt.win}%</b> of the time
         (any random candle: ${bt.base_win}%). Average move in the signal's favour: <b>${pct(bt.avg, 2)}</b>.<br><i>${esc(bt.grade)}</i></p>`;
     };
     return `<div class="card"><h3>How the signal did before <small>${TF_LABEL[tf]} chart, this instrument</small></h3>${one(T.bt.bull, 'buy')}${one(T.bt.bear, 'sell')}
