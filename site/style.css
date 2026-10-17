@@ -262,3 +262,9 @@ a.dl:hover{color:var(--accent)}
 .fxstate.open{color:var(--up)} .fxstate.closed{color:var(--warn)}
 .fxsess{display:flex;flex-wrap:wrap;gap:6px}
 .dec.wait .up{color:var(--up)} .dec.wait .down{color:var(--down)}
+
+/* phone width: long headings wrap, the TradingView summary chip wraps, the holding-time note sits on its own line */
+.tierhead{flex-wrap:wrap}
+@media (max-width:640px){ .tierhead span{white-space:normal} .filters .seg.wrap{min-width:0} }
+.rating .chip{white-space:normal}
+.fnote{flex-basis:100%;font-size:12.5px}

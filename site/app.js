@@ -54,8 +54,9 @@
   const bySize = (a, b) => (lqUsd(b) || 0) - (lqUsd(a) || 0);
   // every list shows everything, in size groups: big well-known names first, unknown size last.
   // forex, indices, commodities and crypto are big markets, so they sit in the first group
-  const TIERS = ['Big, well-known names · trade over $50 million a day', 'Medium · $5–50 million a day',
-    'Small and thinly traded · under $5 million a day · prices jump, spreads are wide', 'Trading size unknown · treat as small'];
+  // no "trade" in these headings: it reads like an instruction above red SELL rows
+  const TIERS = ['Big, well-known names · over $50 million changes hands a day', 'Medium · $5–50 million a day',
+    'Small, few buyers and sellers · under $5 million a day · prices jump, spreads are wide', 'Size unknown · treat as small'];
   const sizeTier = r => { if (!isStockLike(r)) return 0; const v = lqUsd(r); return v == null ? 3 : v >= 5e7 ? 0 : v >= 5e6 ? 1 : 2; };
   const tierHead = (t, n) => `<div class="tierhead t${t}">${esc(TIERS[t])}<span>${n.toLocaleString()}</span></div>`;
   // render rows with a heading each time the size group changes
@@ -393,6 +394,11 @@
   }
   const dirOf = v => v === 'buy' || v === 'lbuy' ? 'up' : v === 'sell' || v === 'lsell' ? 'down' : '';
 
+  const hourlyCtx = () => TF_CTX[S.btf || store.get('btf', '1d')] !== 'days';
+  function wantOdds() { if (S.odds && S.odds.rows) Live.want(Object.keys(S.odds.rows).map(tvLive).filter(Boolean)); }
+  // redraw a view when live facts change, but only if a word actually changed
+  const wordSig = rows => rows.map(r => r.x + ':' + decide(r, TF_CTX[S.btf || store.get('btf', '1d')]).word).join('|');
+
   function viewBoard() {
     S.btf = S.btf || store.get('btf', '1d');
     S.showN = { up: 20, down: 20, lean: 20, wait: 12, none: 8 };
@@ -400,13 +406,15 @@
     $('#view').innerHTML = `
       <p class="intro">Every CFD with one word: <b class="up">TRADE ▲</b> (on the price going up), <b class="down">SELL ▼</b> (on the price going down) or <b>WAIT</b>. The word comes from probability: what price did after past moments that looked like today on the same instrument
         (${dl('probability', 'how this works')}). Choose how long you plan to keep the trade open.
-        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Other markets show Friday\'s close and reopen Sunday night (UTC).</span>' : ''}</p>
+        ${closed ? '<br><span class="warn">It is the weekend: only crypto is trading. Other markets show Friday\'s close and reopen ' + whenText(nextFlip(fxOpenAt)) + '.</span>' : ''}</p>
       ${fb.html}
       <div class="filters"><span class="faint" style="font-size:13px">I will hold the trade for</span>
         <div class="seg wrap" role="group" aria-label="Holding time">${BTFS.map(tf => `<button data-btf="${tf}" class="${S.btf === tf ? 'on' : ''}">${HOLD[tf]}</button>`).join('')}</div></div>
       <div id="board"></div>`;
     fb.wire();
     document.querySelectorAll('[data-btf]').forEach(b => b.onclick = () => { S.btf = b.dataset.btf; store.set('btf', S.btf); viewBoard(); });
+    S.bsig = '';
+    if (hourlyCtx()) { wantOdds(); Live.hook(() => { if ($('#board')) renderBoard(); }); }
     renderBoard();
   }
 
@@ -429,6 +437,9 @@
       wait: ['⏸ Wait', '', 'No clear edge: price went up and down about as often as normal. Most traders skip these.'],
       none: ['No data yet', 'faint', 'No price history from our data source yet (new, renamed or delisted). The live price and TradingView chart may still work.'],
     };
+    const sig = Object.entries(groups).map(([k, g]) => k + S.showN[k] + ':' + g.slice(0, S.showN[k]).map(o => o.r.x).join(',')).join('|');
+    if (sig === S.bsig) { Live.paint(); return; }
+    S.bsig = sig;
     const html = Object.entries(groups).filter(([, g]) => g.length).map(([k, g]) => {
       const [title, cls, sub] = SEC[k];
       const capped = g.slice(0, S.showN[k]);
@@ -602,8 +613,9 @@
       badge = decBadge(dec, ctx, true);
       why = `<div class="reason">${reasonText(dec)}</div>${c ? `<div class="caution">⚠ Careful: ${c}</div>` : ''}`;
       levels = `<div class="olevels"><div>In XTB tap <b class="${dir}">${up ? 'BUY' : 'SELL'}</b>, for ${b.short}:</div>
-        <div><span class="down">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${up ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
-        <div><span class="up">Typical move</span> to ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}) · not a promise</span></div></div>`;
+        <div><span class="warn">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${up ? 'below' : 'above'} the price, ${up ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
+        <div><span class="${dir}">Typical ${up ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${up ? 'above' : 'below'} the price, ${pct(b.typ, 2)}) · not a promise</span></div>
+        <div class="faint" style="font-size:12px">${dl('xtb-price', 'XTB\'s price can differ a little')} from this one: in XTB, put the stop ${stop.toFixed(2)}% ${up ? 'below' : 'above'} the price XTB shows you.</div></div>`;
     } else if (near) {
       const up = near.side === 'buy';
       badge = `<span class="dec wait sm" title="Leaning ${up ? 'up' : 'down'}, close to a TRADE but not there yet">WAIT <span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'}</span></span>`;
@@ -697,9 +709,8 @@
 
   function viewProb(sec, side) {
     const buy = side === 'buy', inv = sec === 'inv', closed = weekend();
-    S.hold = S.hold || store.get('hold', 'days');
-    const hours = !inv && S.hold === 'hours';
-    if (hours && !(S.odds && S.odds.rows)) { S.hold = 'days'; }
+    S.btf = S.btf || store.get('btf', '1d');
+    const hours = !inv && TF_CTX[S.btf] !== 'days';
     const fb = filterBar(sec, renderProb);
     const what = inv ? (buy ? 'a RISE over the next 1–3 months' : 'a FALL over the next 1–3 months') : (buy ? 'a RISE' : 'a FALL');
     $('#view').innerHTML = `
@@ -708,16 +719,17 @@
         ${inv && !buy ? 'For shares you already own: these usually fell afterwards, so think about selling or protecting them with a ' + dl('stop-loss', 'stop loss') + '. (You cannot sell shares you do not own.)' : ''}
         <span class="warn">This is what happened before, not a promise. ${inv ? '' : 'Set the stop loss shown in XTB when you open the trade.'}</span>
         ${closed && !inv ? '<br><span class="warn">Weekend: only crypto is trading. Other markets are listed last.</span>' : ''}</p>
-      ${!inv ? `<div class="filters"><span class="faint" style="font-size:13px">I will hold the trade for</span><div class="seg" role="group" aria-label="Holding time">
-        <button data-hold="hours" class="${S.hold === 'hours' ? 'on' : ''}">hours (1H chart)</button><button data-hold="days" class="${S.hold === 'days' ? 'on' : ''}">days to weeks (Daily chart)</button></div></div>` : ''}
-      <details class="how"${store.get('howOpen', true) ? ' open' : ''}><summary>How it works</summary><p class="intro">${probHow(inv, S.hold === 'hours' && !inv, buy)}</p></details>
+      ${!inv ? `<div class="filters"><span class="faint" style="font-size:13px">I will hold the trade for</span>
+        <div class="seg wrap" role="group" aria-label="Holding time">${BTFS.map(tf => `<button data-btf="${tf}" class="${S.btf === tf ? 'on' : ''}">${HOLD[tf]}</button>`).join('')}</div>
+        <span class="faint fnote">Same setting on every CFD tab, so the word is the same everywhere.</span></div>` : ''}
+      <details class="how"${store.get('howOpen', true) ? ' open' : ''}><summary>How it works</summary><p class="intro">${probHow(inv, hours, buy)}</p></details>
       ${fb.html}
       <div id="oddsStatus" class="countbar faint"></div>
       <div class="rows" id="oddsList"></div>`;
     fb.wire();
-    document.querySelectorAll('[data-hold]').forEach(b => b.onclick = () => { S.hold = b.dataset.hold; store.set('hold', S.hold); route(); });
+    document.querySelectorAll('[data-btf]').forEach(b => b.onclick = () => { S.btf = b.dataset.btf; store.set('btf', S.btf); route(); });
     $('.how').ontoggle = e => store.set('howOpen', e.target.open);
-    if (S.hold === 'hours' && !inv) {
+    if (hours) {
       Live.want(sectionPool(sec, { anyCat: true, noSearch: true }).filter(r => S.odds.rows[r.x]).map(r => tvLive(r.x)).filter(Boolean));
       Live.hook(() => { if ($('#oddsList')) renderProb(); });
     }
@@ -729,7 +741,7 @@
   function probHow(inv, hours, buy) {
     const thr = inv && !buy ? INV_SELL_MIN : WIN_MIN;
     if (hours) return `Right now each instrument's 1H chart is described by 4 simple facts (shown on each row). We look back over the <b>last ${S.odds.months} months</b> of the same instrument,
-      find every hour with the same 4 facts, and count what price did <b>1 hour, 4 hours and 1 day later</b>. The facts are re-checked live every 15 seconds (crypto prices every second).
+      find every hour with the same 4 facts, and count what price did <b>over your holding time</b> (${HOLD[S.btf]}). The facts are re-checked live every 15 seconds (crypto prices every second).
       Only the ${Object.keys(S.odds.rows).length} instruments on the fast-watch list have hourly odds.`
       + ` Listed when price went your way <b>at least ${thr} times in 100</b>, at least ${MARGIN} more than ${dl('base-rate', 'normal')}, ${buy ? 'rose' : 'fell'} on average, and ${dl('luck-test', 'is unlikely to be luck')}. Best evidence at the top.`;
     return `Today each instrument's <b>Daily chart</b> is described by 3 simple facts (above or below its 50-day and 200-day averages, and its ${dl('rsi', 'RSI')}). We look back over <b>all its history (up to about 8 years)</b>,
@@ -740,23 +752,18 @@
 
   function renderProb() {
     const box = $('#oddsList'); if (!box) return;
-    const sec = S.sec, side = S.sub, inv = sec === 'inv', hours = !inv && S.hold === 'hours';
+    const sec = S.sec, side = S.sub, inv = sec === 'inv', ctx = inv ? 'inv' : TF_CTX[S.btf], hours = ctx !== 'days' && ctx !== 'inv';
     const all = sectionPool(sec);
     const good = [], cnt = { live: 0, few: 0, other: 0 };
     for (const r of all) {
       if (!hasData(r)) { cnt.few++; continue; }
       if (!inv && side === 'sell' && !(isTV() || r.cfd)) continue;
-      let e;
-      if (hours) {
-        if (!S.odds.rows[r.x]) continue;
-        e = oddsEval(r, side);
-        if (e.live) cnt.live++;
-        if (!e.st) { cnt.few++; continue; }
-      } else {
-        e = inv ? dailyEval(r, side, [1, 2], side === 'sell' ? INV_SELL_MIN : WIN_MIN) : dailyEval(r, side, [0, 1], WIN_MIN);
-        if (!e) { cnt.few++; continue; }
-      }
-      if (e.best) good.push({ r, e }); else cnt.other++;
+      // the very same decide() as Overview, Forex, Search and the instrument page: an instrument is
+      // listed here only when its ONE word is this side, so it can never be on both lists
+      const dec = decide(r, ctx);
+      if (dec.word === 'none') { cnt.few++; continue; }
+      if (dec.ev && dec.ev.live) cnt.live++;
+      if (dec.word === side) good.push({ r, e: { ...dec.ev, best: dec.c }, dec }); else cnt.other++;
     }
     // thinly traded shares (under 1M a day) jump around and have wide spreads: listed after the rest
     // big group: the most traded (best-known) names first; smaller groups: strongest odds first
@@ -778,7 +785,7 @@
         : tiered(shown, g => probRow(g, sec, side), g => g.r) + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : ''))
       : `<div class="empty">Nothing is clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'worth a trade up' : 'worth a sell'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
       That is normal. It changes as prices move${hours ? ', and this page re-checks by itself every 15 seconds' : ''}.</div>`;
-    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${hours ? '1h' : '1d'}`; });
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${inv ? '1d' : S.btf === '15m' ? '1h' : S.btf}`; });
     const m = $('#more'); if (m) m.onclick = () => { if (S.top) { S.top = false; S.shown = ALL; } else S.shown += 50; renderProb(); };
     Live.paint(); Fund.want();
   }
@@ -798,23 +805,24 @@
     }).join('');
   }
 
-  function probRow({ r, e }, sec, side) {
+  function probRow({ r, e, dec: D }, sec, side) {
     const buy = side === 'buy', inv = sec === 'inv', lt = tvLive(r.x), b = e.best, hourly = e.src === 'h';
     const c = lt && Live.q[lt], price = (c && c.p) || (r.live ? r.live.p : r.d.p), dp = decimalsOf(price);
     const lvl = f => `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>`;
     const stop = Math.max(b.stop || 0, 0.05), fs = buy ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + (b.typ || 0) / 100;
-    const dec = { word: side, c: b };
+    const dec = D || { word: side, c: b };
     const t = hourly ? tfData(r, '1h') : r.d;
     const extra = inv && lt && r.ty === 'Stocks' ? `<div class="why"><span class="fund" data-fund="${esc(lt)}"></span></div>` : '';
     return `<button class="row orow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(r.x)}">
       <div class="name"><div class="decrow">${decBadge(dec, inv ? 'inv' : 'x', true)}<span class="rname">${esc(r.n)}</span><span class="sym">${esc(shownSym(r))}</span></div>
-        <div class="faint meta">${esc(r.ty)}${isStockLike(r) ? ' · ' + esc(r.m) : ''} · based on ${e.n} similar past ${hourly ? 'hours' : 'days'}${hourly && e.live ? ' · checked live' : ''}</div></div>
+        <div class="faint meta">${esc(r.ty)}${isStockLike(r) ? ' · ' + esc(r.m) : ''} · based on ${e.n} similar past ${hourly ? 'hours' : 'days'}${hourly && e.live ? ' · checked live' : ''}${!inv && !hourly && TF_CTX[S.btf] !== 'days' ? ' · odds from the Daily chart (no hourly odds for this one)' : ''}</div></div>
       ${priceBox(r, `<div class="faint" style="font-size:11px;font-weight:400">${lt ? (lt.startsWith('BINANCE:') ? 'live · every second' : 'live price') : 'last scan price'}</div>`)}
       <div class="why col">${reasonHTML(r, dec, t, null, side)}</div>
       <div class="olevels">
         <div>${inv ? (buy ? 'If you buy' : 'If you own it') : `If you ${buy ? 'trade ▲ up (XTB button: BUY)' : 'sell ▼ (XTB button: SELL)'}`}, for ${b.short}:</div>
-        <div><span class="down">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${buy ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
-        <div><span class="up">Typical ${buy ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${pct(b.typ, 2)}) · not a promise</span></div>
+        <div><span class="warn">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${buy ? 'below' : 'above'} the price, ${buy ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
+        <div><span class="${buy ? 'up' : 'down'}">Typical ${buy ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${buy ? 'above' : 'below'} the price, ${pct(b.typ, 2)}) · not a promise</span></div>
+        ${inv ? '' : `<div class="faint" style="font-size:12px">${dl('xtb-price', 'XTB\'s price can differ a little')} from this one: in XTB, put the stop ${stop.toFixed(2)}% ${buy ? 'below' : 'above'} the price XTB shows you.</div>`}
       </div>${extra}
     </button>`;
   }
@@ -828,8 +836,8 @@
       sort: (a, b) => { const k = S.side === 'buy' ? 'b' : 's'; return (tfData(b, S.ctf)[k] - tfData(a, S.ctf)[k]) || bySize(a, b); },
     },
     'cfd/avoid': {
-      intro: () => `CFDs with <b>no clear direction</b> on the Daily chart: both signal scores are under 40 and the odds show no edge. Trades here are close to a coin flip, so most traders wait.`,
-      filter: r => r.d.b != null && r.d.b < 40 && r.d.s < 40 && decide(r, 'days').word === 'wait',
+      intro: () => `CFDs with <b>no clear direction</b>: both Daily signal scores are under 40 and the odds for your holding time (${HOLD[S.btf || store.get('btf', '1d')]}) show no edge. Trades here are close to a coin flip, so most traders wait.`,
+      filter: r => r.d.b != null && r.d.b < 40 && r.d.s < 40 && decide(r, TF_CTX[S.btf || store.get('btf', '1d')]).word === 'wait',
       sort: bySize,
     },
     'inv/strong': {
@@ -858,6 +866,8 @@
     $('#export').onclick = exportWatchlist;
     document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { S.side = b.dataset.side; route(); });
     document.querySelectorAll('[data-ctf]').forEach(b => b.onclick = () => { S.ctf = b.dataset.ctf; route(); });
+    S.lsig = '';
+    if (sec === 'cfd' && hourlyCtx()) { wantOdds(); Live.hook(() => { if ($('#rows') && wordSig(currentList()) !== S.lsig) renderRows(); }); }
     renderRows();
   }
 
@@ -884,13 +894,28 @@
   function renderRows() {
     if (!$('#rows')) return;
     const list = currentList();
+    if (S.sec === 'cfd') S.lsig = wordSig(list);
     $('#count').textContent = `${list.length.toLocaleString()} match${list.length === 1 ? '' : 'es'}`;
     if (!list.length) { $('#rows').innerHTML = '<div class="empty">Nothing matches right now. Try another kind, chart or filter.</div>'; return; }
-    $('#rows').innerHTML = tiered(list.slice(0, S.shown), rowHTML) +
+    $('#rows').innerHTML = (S.sec + '/' + S.sub === 'cfd/strong' ? strongGroups(list.slice(0, S.shown)) : tiered(list.slice(0, S.shown), rowHTML)) +
       (list.length > S.shown ? `<button class="more" id="more">Show more (${(list.length - S.shown).toLocaleString()} left)</button>` : '');
     $('#rows').querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${S.sec === 'cfd' && S.sub === 'strong' ? S.ctf : '1d'}`; });
     const m = $('#more'); if (m) m.onclick = () => { S.shown += 50; renderRows(); };
     Live.paint(); Live.poll(); Fund.want();
+  }
+
+  // signals are not the word: split the list so a red SELL never sits among "up" rows unexplained
+  function strongGroups(list) {
+    const up = S.side === 'buy', btf = S.btf || store.get('btf', '1d'), ctx = TF_CTX[btf], G = { agree: [], wait: [], against: [] };
+    list.forEach(r => { const w = decide(r, ctx).word; G[w === S.side ? 'agree' : w === 'buy' || w === 'sell' ? 'against' : 'wait'].push(r); });
+    const H = {
+      agree: [up ? '<span class="up">✓ Signals and odds agree: TRADE ▲ UP</span>' : '<span class="down">✓ Signals and odds agree: SELL ▼</span>', ''],
+      wait: ['⏸ Signals only, the odds say WAIT', 'Do not trade these yet: in the past this look did not win often enough.'],
+      against: ['⚠ The odds point the OTHER way', up ? 'Up signals, but in the past price usually FELL after moments like this. The word on each row (red SELL ▼) is what the odds say. Do not trade these up.'
+        : 'Down signals, but in the past price usually ROSE after moments like this. The word on each row (green TRADE ▲ UP) is what the odds say. Do not sell these.'],
+    };
+    return ['agree', 'wait', 'against'].filter(k => G[k].length).map(k => `<div class="tierhead">${H[k][0]}<span>${G[k].length.toLocaleString()} · word for ${HOLD[btf]}</span></div>${H[k][1] ? `<p class="faint bsub">${H[k][1]}</p>` : ''}`
+      + G[k].map(rowHTML).join('')).join('');
   }
 
   function trendChip(tr) { return tr === 'up' ? '<span class="chip g">Uptrend</span>' : tr === 'down' ? '<span class="chip r">Downtrend</span>' : '<span class="chip">Sideways</span>'; }
@@ -912,7 +937,7 @@
     if (key === 'cfd/strong') {
       t = tfData(r, S.ctf);
       const sc = S.side === 'buy' ? t.b : t.s;
-      ctx = { '1h': 'h1', '4h': 'h2' }[S.ctf] || 'days';
+      ctx = TF_CTX[S.btf || store.get('btf', '1d')];
       hint = S.side;
       info = `<span class="chip" title="How many chart signals point this way, out of 100">${S.side === 'buy' ? '▲ Up' : '▼ Down'} signals ${sc}/100 on the ${TF_LABEL[S.ctf]} chart</span>`;
     } else if (S.sec === 'inv') {
@@ -920,6 +945,7 @@
       info = `<span class="chip">Long-term trend ${v.score}/100</span><span class="chip">12 months ${pct(v.ret12m)}</span><span class="chip">${v.from_high > -1 ? 'At its 52-week high' : pct(v.from_high) + ' from its 52-week high'}</span>
         ${tvLive(r.x) && r.ty === 'Stocks' ? `<span class="fund" data-fund="${esc(tvLive(r.x))}"></span>` : ''}`;
     } else if (key === 'cfd/avoid') {
+      ctx = TF_CTX[S.btf || store.get('btf', '1d')];
       info = '<span class="chip">Signals mixed: none above 40/100</span>';
     }
     const dec = decide(r, ctx);
@@ -931,7 +957,7 @@
   function metaLine(r) {
     const d = r.d || {};
     const tags = isTV() ? (r.tvo ? 'Thai SET (not on XTB)' : '') : [r.cfd ? 'CFD' : '', r.real ? 'Real shares' : ''].filter(Boolean).join(' + ');
-    return `${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${lqUsd(r) ? ' · trades about $' + money(lqUsd(r)) + '/day' : ''}`;
+    return `${esc(r.ty)} · ${esc(r.m)}${tags ? ' · ' + tags : ''}${lqUsd(r) ? ' · about $' + money(lqUsd(r)) + ' changes hands a day' : ''}`;
   }
 
   // ---------------------------------------------------------------- search all
@@ -944,13 +970,14 @@
     const types = [...new Set(rows.map(r => r.ty))].sort();
     const nd = rows.filter(r => !hasData(r)).length;
     $('#view').innerHTML = `<p class="intro">Every ${isTV() ? '' : 'XTB '}instrument we know: <b>${rows.length.toLocaleString()}</b>. Type a company name, ticker or nickname (Apple, AAPL, nasdaq, gold, btc).
-        Each one shows two words: what the odds say for a <b>CFD trade</b> (days to weeks) and for <b>investing</b> (months).
+        Each one shows two words: what the odds say for a <b>CFD trade</b> (for your holding time, set on the CFD tabs: ${HOLD[S.btf || store.get('btf', '1d')]}) and for <b>investing</b> (months). They can differ, because they are about different lengths of time.
         ${nd ? `<span class="faint">${nd.toLocaleString()} have no price history from our data source yet; they still show a live price and chart where TradingView has one.</span>` : ''}</p>
       <div class="filters"><input id="sq" type="search" placeholder="Search everything…" aria-label="Search everything" value="${esc(S.sq)}" autofocus></div>
       <div class="filters"><div class="seg wrap" role="group" aria-label="Kind"><button data-sty="" class="${S.sty ? '' : 'on'}">All</button>${types.map(t => `<button data-sty="${esc(t)}" class="${S.sty === t ? 'on' : ''}">${esc(t)}</button>`).join('')}</div></div>
       <div class="countbar"><span id="count" class="faint"></span></div>
       <div class="rows" id="srows"></div>`;
     $('#sq').oninput = e => { S.sq = e.target.value; S.shown = ALL; renderSearch(); };
+    if (hourlyCtx()) { wantOdds(); let ss = ''; Live.hook(() => { if (!$('#srows')) return; const v = wordSig(S.summary.rows.filter(r => inMode(r) && tradable(r) && S.odds.rows[r.x])); if (v !== ss) { ss = v; renderSearch(); } }); }
     document.querySelectorAll('[data-sty]').forEach(b => b.onclick = () => { S.sty = b.dataset.sty; document.querySelectorAll('[data-sty]').forEach(o => o.classList.toggle('on', o === b)); S.shown = ALL; renderSearch(); });
     renderSearch();
   }
@@ -977,7 +1004,7 @@
   function searchRow(r) {
     const d = r.d || {};
     const words = [];
-    if (tradable(r)) words.push(`<span class="dlabel">CFD</span>${decBadge(decide(r, 'days'), 'days', true)}`);
+    if (tradable(r)) { const btf = S.btf || store.get('btf', '1d'); words.push(`<span class="dlabel">CFD · ${HOLD[btf]}</span>${decBadge(decide(r, TF_CTX[btf]), 'x', true)}`); }
     if (isStockLike(r) && (isTV() || r.real)) words.push(`<span class="dlabel">Investing</span>${decBadge(decide(r, 'inv'), 'inv', true)}`);
     const chips = hasData(r) ? (d.inv ? `<span class="chip">Long-term trend ${d.inv.score}/100</span>` : '')
       : '<span class="chip y">No price history from our data source yet: tap for the live chart</span>';
@@ -1029,14 +1056,20 @@
     });
     const judged = items.filter(i => i.ok != null && i.age >= 1);
     const wins = judged.filter(i => i.ok).length;
-    $('#view').innerHTML = `<p class="intro">Every time a signal score crossed 70, or a candle pattern that has worked before appeared at a support or resistance level, the scanner wrote it down here.
+    $('#view').innerHTML = `<p class="intro"><b>An alert is a chart signal, not a trade word.</b> Before any trade, look at the word on the row (TRADE ▲ UP / SELL ▼ / WAIT), which comes from the odds. Every time a signal score crossed 70, or a candle pattern that has worked before appeared at a support or resistance level, the scanner wrote it down here.
         The report card checks honestly how each alert did: the price when it fired compared with the latest price.
         ${''}Telegram messages to your phone start once the bot is set up.</p>
       <div class="grid2" style="margin:0 0 12px"><div class="card"><h3>Report card <small>alerts at least 1 day old</small></h3>
         ${judged.length ? `<div class="bigscore"><div><span class="muted">Went the alert's way</span><b class="num ${wins / judged.length >= 0.5 ? 'up' : 'down'}">${Math.round(wins / judged.length * 100)}%</b></div><div><span class="muted">Alerts checked</span><b class="num">${judged.length}</b></div></div>
-        <div class="note">"Went its way" = a buy alert's price is higher now, a sell alert's is lower. It ignores stops and timing, so it is a rough guide, not a trading result. Around 50% means the alerts are no better than a coin flip.</div>` : '<p class="faint">Not enough alerts older than a day yet.</p>'}</div></div>
-      <div class="rows">${items.length ? items.map(alertRow).join('') : '<div class="empty">No alerts yet.</div>'}</div>`;
-    document.querySelectorAll('#view [data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${b.dataset.tf || '1d'}`; });
+        <div class="note">"Went its way" = an up-signal's price is higher now, a down-signal's is lower. It ignores stops and timing, so it is a rough guide, not a trading result. Around 50% means the alerts are no better than a coin flip.</div>` : '<p class="faint">Not enough alerts older than a day yet.</p>'}</div></div>
+      <div class="rows" id="alrows">${items.length ? items.map(alertRow).join('') : '<div class="empty">No alerts yet.</div>'}</div>`;
+    const wire = () => document.querySelectorAll('#view [data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${b.dataset.tf || '1d'}`; });
+    wire();
+    if (hourlyCtx() && items.length) {
+      wantOdds(); let as = wordSig(items.map(i => i.r).filter(Boolean));
+      Live.hook(() => { const box = $('#alrows'); if (!box) return; const v = wordSig(items.map(i => i.r).filter(Boolean)); if (v !== as) { as = v; box.innerHTML = items.map(alertRow).join(''); wire(); } });
+      Live.poll();
+    }
   }
 
   function alertRow({ a, r, now, mv, ok }) {
@@ -1045,8 +1078,9 @@
       : `${PAT[a.pid] ? PAT[a.pid][0] : a.pid} pattern at a key level on the ${TF_LABEL[a.tf] || a.tf} chart`;
     const dp = a.price ? decimalsOf(a.price) : 2;
     return `<button class="row brow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(a.x)}" data-tf="${esc(a.tf)}">
-      <div class="name"><span class="dec ${buy ? 'buy' : 'sell'} sm">${buy ? 'TRADE ▲ UP' : 'SELL ▼'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
-        <div class="faint" style="font-size:12.5px;font-weight:400">${esc(what)} · ${ago(a.at)}</div></div>
+      <div class="name"><span class="dec wait sm" title="An alert is a chart signal, not a trade word">${buy ? '▲ UP SIGNAL' : '▼ DOWN SIGNAL'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
+        <div class="faint" style="font-size:12.5px;font-weight:400">${esc(what)} · ${ago(a.at)}</div>
+        ${r && hasData(r) ? `<div class="decrow" style="margin-top:4px"><span class="faint" style="font-size:12.5px;font-weight:400">Word now (${HOLD[S.btf || store.get('btf', '1d')]}):</span>${decBadge(decide(r, TF_CTX[S.btf || store.get('btf', '1d')]), 'x', true)}</div>` : ''}</div>
       <div class="px num">${a.price ? chartFmt(a.price, dp) : '–'}<div class="faint" style="font-size:11px;font-weight:400">price at alert</div></div>
       <div class="why">${mv != null ? `<span class="chip ${ok ? 'g' : 'r'}">Since then: ${pct(mv, 2)} · ${ok ? 'went its way' : 'went against it'}</span><span class="chip">Latest ${chartFmt(now, dp)}</span>` : '<span class="chip">No latest price</span>'}</div></button>`;
   }
@@ -1141,11 +1175,11 @@
     if (!row || !hasData(row)) return '';
     const parts = [];
     if (tradable(row)) {
-      if (S.odds && S.odds.rows && S.odds.rows[row.x]) parts.push(['CFD · hours', decide(row, 'h')]);
-      parts.push(['CFD · days to weeks', decide(row, 'days')]);
+      const btf = S.btf || store.get('btf', '1d');
+      parts.push([`CFD · ${HOLD[btf]}`, decide(row, TF_CTX[btf])]);
     }
     if (isStockLike(row) && (isTV() || row.real)) parts.push(['Investing · months', decide(row, 'inv')]);
-    return `<div class="dstrip">${parts.map(([l, dec]) => `<div class="dbox ${dec.word}"><span class="faint">${l}</span><div>${decBadge(dec, l.startsWith('Investing') ? 'inv' : 'x')}</div></div>`).join('')}
+    return `<div class="dstrip" id="dstrip">${parts.map(([l, dec]) => `<div class="dbox ${dec.word}"><span class="faint">${l}</span><div>${decBadge(dec, l.startsWith('Investing') ? 'inv' : 'x')}</div></div>`).join('')}
       <a class="dl dhow" href="#/dict/probability">How is this decided?</a></div>`;
   }
 
@@ -1184,10 +1218,11 @@
     if (!row || !hasData(row)) return '';
     const p = store.get('plan', { bal: 1000, risk: 1 });
     // a starting stop: the odds' stop for this holding time if there is one, else 1.5 average candles
-    const dec = decide(row, tf === '1h' || tf === '15m' || tf === '4h' ? 'h' : 'days');
+    const dec = decide(row, TF_CTX[S.btf || store.get('btf', '1d')]);
     const fromOdds = !!(dec.c && dec.c.stop);
     const stopPct = fromOdds ? dec.c.stop : Math.max(0.1, (row.d.atrp || 1) * 1.5);
     const side = dec.word === 'sell' ? 'sell' : 'buy';
+    S.planWord = dec.word;
     const dp = decimalsOf(price);
     const stop = side === 'buy' ? price * (1 - stopPct / 100) : price * (1 + stopPct / 100);
     const target = side === 'buy' ? price + 2 * (price - stop) : price - 2 * (stop - price);
@@ -1200,7 +1235,9 @@
         <label>Stop loss<input id="pStop" type="number" step="any" value="${stop.toFixed(dp)}"></label>
         <label>Take profit<input id="pTarget" type="number" step="any" value="${target.toFixed(dp)}"></label>
       </div>
+      <div id="planNote"></div>
       <div id="pOut" class="pout"></div>
+      ${dec.word === 'buy' || dec.word === 'sell' ? '' : `<div class="caution">⚠ The word right now is <b>${dec.word === 'wait' ? 'WAIT' : 'NO ODDS'}</b>: the site does not suggest a trade on this one. Use this box only to practise.</div>`}
       <div class="note">Starting stop = ${fromOdds ? `the odds' stop (8 of 10 past times never went that far against you, ${dec.c.short})` : '1.5 average candles away'}; take profit = 2× the stop distance. Change any box.
         In XTB the size is set in <b>lots</b>: check the lot size in the app (stock CFDs are usually 1 share per lot, forex 100,000 units, gold 100 ounces). If your account is in another currency, convert first. ${dl('position-size', 'Why size this way?')}</div></div>`;
   }
@@ -1296,6 +1333,16 @@
     Live.paint(); Live.poll();
     document.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { if (!b.disabled) location.hash = `#/i/${encodeURIComponent(x)}/${b.dataset.tf}`; });
     wirePlan();
+    { const st = $('#dstrip'); if (st) st.dataset.src = decisionStrip(row); }
+    if (row && hasData(row)) {
+      if (hourlyCtx()) wantOdds();
+      Live.hook(() => {
+        const st = $('#dstrip'); if (!st) return;
+        const fresh = decisionStrip(row); if (st.dataset.src !== fresh) { st.outerHTML = fresh; const n2 = $('#dstrip'); if (n2) n2.dataset.src = fresh; }
+        const now = decide(row, TF_CTX[S.btf || store.get('btf', '1d')]).word, n = $('#planNote');
+        if (n) n.innerHTML = now !== S.planWord ? `<div class="caution">⚠ The word has changed to <b>${{ buy: 'TRADE ▲ UP', sell: 'SELL ▼', wait: 'WAIT', none: 'NO ODDS' }[now]}</b> since this box was filled. Check the Side box before you trade, or reload the page.</div>` : '';
+      });
+    }
     S.chart = new CandleChart($('#chart'), { onMark: (i, ms) => showPicked(ms, T, tf) });
     S.chart.setData(d);
   }
@@ -1494,7 +1541,7 @@
 
     function recLabel(v) {
       if (v == null) return null;
-      return v > 0.5 ? ['Strong buy', 'g'] : v > 0.1 ? ['Buy', 'g'] : v < -0.5 ? ['Strong sell', 'r'] : v < -0.1 ? ['Sell', 'r'] : ['Neutral', ''];
+      return v > 0.5 ? ['leans strongly up', ''] : v > 0.1 ? ['leans up', ''] : v < -0.5 ? ['leans strongly down', ''] : v < -0.1 ? ['leans down', ''] : ['neutral', ''];
     }
 
     function paint() {
@@ -1522,7 +1569,7 @@
       });
       document.querySelectorAll('[data-rec]').forEach(el => {
         const c = q[el.dataset.rec], l = c && recLabel(c.rec);
-        el.innerHTML = l ? `<span class="chip ${l[1]}" title="TradingView's own technical summary (moving averages + oscillators). A second opinion, separate from the scores on this page.">TradingView rating: ${l[0]}</span>` : '';
+        el.innerHTML = l ? `<span class="chip ${l[1]}" title="TradingView's own chart summary (moving averages + oscillators). It is NOT this site's word: follow the TRADE ▲ UP / SELL ▼ / WAIT word above.">TradingView's own chart summary: ${l[0]} (not our word)</span>` : '';
       });
       const pill = $('#livePill');
       const fresh = Date.now() - okAt < 60000;

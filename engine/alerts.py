@@ -106,7 +106,7 @@ def format_event(e):
     arrow = "🟢 ▲" if e["side"] == "buy" else "🔴 ▼"
     head = f'{arrow} <b>{_esc(e["n"])}</b> ({_esc(e["x"])}) · {TF_NAME.get(e["tf"], e["tf"])}'
     if e["kind"] == "setup":
-        lines = [head, f'{"Buy" if e["side"] == "buy" else "Sell"}-side setup score crossed 70 → <b>{e["score"]}</b>/100']
+        lines = [head, f'{"Up" if e["side"] == "buy" else "Down"}-side signal score crossed 70 → <b>{e["score"]}</b>/100 (a signal, not a trade word: check TRADE ▲ UP / SELL ▼ / WAIT on the site)']
         if e.get("pats"):
             names = ", ".join(PATTERNS[p["id"]][0] for p in e["pats"] if p["dir"] != "neutral")
             if names:
@@ -177,9 +177,9 @@ def morning_digest(rows, state_dir, log=print):
     fmt = lambda r, k: f'• <a href="{_link(r["x"], "1d")}">{_esc(r["n"])}</a> ({_esc(r["x"])}) {r["d"][k]}'
     parts = ["☀️ <b>Morning summary</b> (Daily charts)"]
     if buys:
-        parts += ["", "🟢 <b>Strongest buy-side setups</b>"] + [fmt(r, "b") for r in buys]
+        parts += ["", "🟢 <b>Strongest up-side signals</b> (signals, not trade words)"] + [fmt(r, "b") for r in buys]
     if sells:
-        parts += ["", "🔴 <b>Strongest sell-side setups</b>"] + [fmt(r, "s") for r in sells]
+        parts += ["", "🔴 <b>Strongest down-side signals</b> (signals, not trade words)"] + [fmt(r, "s") for r in sells]
     if inv:
         parts += ["", "📈 <b>Strong long-term trends</b>"] + [f'• {_esc(r["n"])} ({_esc(r["x"])}) {r["d"]["inv"]["score"]}' for r in inv]
     parts += ["", f'<a href="{SITE}">Open the website</a> · evidence, not advice']
