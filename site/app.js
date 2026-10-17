@@ -767,19 +767,33 @@
     const liveTxt = !hours ? `From each instrument's last scan` : Live.fresh() ? `Facts checked live for ${cnt.live} instruments` : 'Live check not reachable - using the last scan (' + ago(S.odds.generated) + ')';
     $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${inv ? (side === 'buy' ? 'good for buying' : 'to sell') : side === 'buy' ? 'to trade up' : 'to sell'} now · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
     const TOP = 10, lim = S.top ? TOP : S.shown;
-    const sig = good.slice(0, lim).map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh() + '#' + lim;
+    const sig = (S.top ? topEach(good) : good.slice(0, lim)).map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh() + '#' + lim;
     if (sig === S.osig) { Live.paint(); return; }
     S.osig = sig;
     const shown = good.slice(0, lim);
     box.innerHTML = good.length ? (S.top
-        ? `<div class="tierhead">Top ${shown.length} by probability<span>highest first · big and medium names</span></div>` + shown.map(g => probRow(g, sec, side)).join('')
-          + (good.length > shown.length ? `<button class="more" id="more">Show all ${good.length.toLocaleString()}</button>` : '')
+        ? topByKind(good, all, sec, side, inv) + (good.length > TOP ? `<button class="more" id="more">Show all ${good.length.toLocaleString()} in one list</button>` : '')
         : tiered(shown, g => probRow(g, sec, side), g => g.r) + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : ''))
       : `<div class="empty">Nothing is clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'worth a trade up' : 'worth a sell'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
       That is normal. It changes as prices move${hours ? ', and this page re-checks by itself every 15 seconds' : ''}.</div>`;
     box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${hours ? '1h' : '1d'}`; });
     const m = $('#more'); if (m) m.onclick = () => { if (S.top) { S.top = false; S.shown = ALL; } else S.shown += 50; renderProb(); };
     Live.paint(); Fund.want();
+  }
+
+  // top 10 for each kind, so forex / indices / commodities / crypto are not pushed out by stock CFDs
+  const KIND_ORDER = [['Forex', '💱 Forex'], ['Indices', 'Indices'], ['Commodities', 'Commodities'], ['Crypto', 'Crypto'], ['Stocks', 'Stocks'], ['ETFs', 'ETFs']];
+  const topEach = good => { const c = {}; return good.filter(g => (c[g.r.ty] = (c[g.r.ty] || 0) + 1) <= 10); };
+  function topByKind(good, all, sec, side, inv) {
+    return KIND_ORDER.map(([ty, label]) => {
+      const pool = all.filter(r => r.ty === ty).length;
+      if (!pool) return '';
+      const list = good.filter(g => g.r.ty === ty), shown = list.slice(0, 10);
+      const shut = ty !== 'Crypto' && weekend() ? ` · closed now, reopens ${whenText(nextFlip(fxOpenAt), true)}` : '';
+      return `<div class="tierhead">${label} · top ${shown.length} of ${list.length}<span>highest probability first${shut}</span></div>`
+        + (shown.length ? shown.map(g => probRow(g, sec, side)).join('')
+          : `<div class="empty">No ${esc(label.replace(/^\S+ /, ''))} clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'worth a trade up' : 'worth a sell'} right now (${pool.toLocaleString()} checked).</div>`);
+    }).join('');
   }
 
   function probRow({ r, e }, sec, side) {
