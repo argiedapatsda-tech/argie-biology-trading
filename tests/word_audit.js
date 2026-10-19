@@ -23,7 +23,8 @@ async (page) => {
       res.rows.push({ x: el.dataset.x, head, word: d.textContent.trim(), cls: d.className,
         reason: (el.querySelector('.reason') || {}).textContent || '', nums,
         price: px ? +px.textContent.trim().split(/\s/)[0].replace(/[^0-9.\-]/g, '') : null,
-        lv: (el.querySelector('.olevels') || {}).textContent || '' });
+        lv: (el.querySelector('.olevels') || {}).textContent || '',
+        ch: (() => { const lc = el.querySelector('.px .lc'); const v = lc && parseFloat(lc.textContent.replace('−', '-')); return isNaN(v) ? null : v; })() });
     }
     return res;
   }, label);
@@ -32,7 +33,7 @@ async (page) => {
     data.textHits.forEach(t => bad(where, t));
     for (const r of data.rows) {
       const w = r.word;
-      const isUp = /^TRADE ▲ UP$|^BUY$/.test(w), isDown = /^SELL ▼$|^SELL$/.test(w);
+      const isUp = /^TRADE NOW ▲$|^BUY$/.test(w), isDown = /^SELL NOW ▼$|^SELL$/.test(w);
       // 1. word <-> colour class
       if (isUp && !/\bbuy\b/.test(r.cls)) bad(where, `${r.x} says ${w} but is not green (${r.cls})`);
       if (isDown && !/\bsell\b/.test(r.cls)) bad(where, `${r.x} says ${w} but is not red (${r.cls})`);
@@ -54,8 +55,15 @@ async (page) => {
         if (isDown && !/SELL/.test(r.lv)) bad(where, `${r.x} red row but levels text lacks SELL: ${r.lv.slice(0, 80)}`);
         if (isUp && !/BUY|buy/.test(r.lv)) bad(where, `${r.x} green row but levels text lacks BUY: ${r.lv.slice(0, 80)}`);
       }
-      // 5. collect for cross-tab comparison (CFD words only)
-      if (words && r.x && (isUp || isDown || /^WAIT|^NOT YET|^NO ODDS/.test(w))) {
+      // 5. cautious words: never TRADE NOW next to a red day change or SELL NOW next to a green one
+      if (r.ch != null && !/^BUY$|^SELL$/.test(w)) {
+        if (isUp && r.ch < 0) bad(where, `${r.x} ${w} but today's change is ${r.ch}%`);
+        if (isDown && r.ch > 0) bad(where, `${r.x} ${w} but today's change is +${r.ch}%`);
+      }
+      if (/^WAIT\s*[▲▼]/.test(w) && !/But |Still needs/.test(r.reason)) bad(where, `${r.x} WAIT without saying what is missing: ${r.reason.slice(0, 80)}`);
+      if ((isUp || isDown) && !/^BUY$|^SELL$/.test(w) && r.nums.length !== 2) bad(where, `${r.x} ${w} without stop + target levels`);
+      // 6. collect for cross-tab comparison (CFD words only)
+      if (words && r.x && (isUp || isDown || /^WAIT|^DON'T TRADE|^NO ODDS/.test(w))) {
         const k = isUp ? 'up' : isDown ? 'down' : 'none';
         (words[r.x] = words[r.x] || []).push([where, k]);
       }
@@ -77,9 +85,9 @@ async (page) => {
     const words = {};
     // Overview: show every group in full
     for (let i = 0; i < 40; i++) { const m = page.locator('[data-more]'); if (!(await m.count())) break; await m.first().click(); await page.waitForTimeout(400); }
-    check(btf + ' Overview', await scan(), h => /Trade up now/.test(h) ? 'up' : /Sell now/.test(h) ? 'down' : null, words);
+    check(btf + ' Overview', await scan(), h => /Trade now/.test(h) ? 'up' : /Sell now/.test(h) ? 'down' : null, words);
     await go('#/cfd/forex'); const fa = page.locator('#fxall, [data-fxall]'); if (await fa.count()) { await fa.first().click(); await page.waitForTimeout(1500); }
-    check(btf + ' Forex', await scan(), h => /TRADE UP|to TRADE/.test(h) ? 'up' : /SELL/.test(h) ? 'down' : null, words);
+    check(btf + ' Forex', await scan(), h => /to TRADE NOW/.test(h) ? 'up' : /to SELL NOW/.test(h) ? 'down' : null, words);
     for (const [sub, side] of [['buy', 'up'], ['sell', 'down']]) {
       await go('#/cfd/' + sub); check(btf + ' CFD ' + sub + ' top10', await scan(), () => side, words);
       await showAll(); check(btf + ' CFD ' + sub + ' all', await scan(), () => side, words);
