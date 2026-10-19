@@ -73,6 +73,10 @@
   const isTV = () => S.mode === 'tv';
   const tvSym = x => S.tv[x] || '';
   const tvLive = x => { const t = tvSym(x); return t.includes(':') ? t : ''; };  // has a live price feed
+  const PDP = store.get('pdp', {});  // live ticker -> decimals it trades with (see dpFor)
+  const fxDp = x => /JPY|HUF/.test(x) ? 3 : 5;
+  const XTB_DP = { GOLD: 2, SILVER: 3, OIL: 2, 'OIL.WTI': 2, NATGAS: 3 };  // where XTB's digits differ from TradingView's
+  const fxTicker = t => /^(FX_IDC|FX|OANDA):[A-Z]{6}$/.test(t);
   const shownSym = r => isTV() ? (tvSym(r.x) || r.x) : r.x;
   const tvLink = x => 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSym(x) || x);
   const inMode = r => isTV() || !r.tvo;   // Thai SET stocks only exist in TradingView mode
@@ -500,7 +504,7 @@
 
   function priceBox(r, extraNote) {
     const d = r.d || {}, price = r.live ? r.live.p : d.p, lt = tvLive(r.x);
-    return `<div class="px num" ${lt ? `data-live="${esc(lt)}"` : ''}><span class="lp">${price != null ? chartFmt(price, decimalsOf(price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${d.ch != null ? pct(d.ch, 2) : ''}</div>${extraNote || ''}</div>`;
+    return `<div class="px num" ${lt ? `data-live="${esc(lt)}" ${dpAttr(r)}` : ''}><span class="lp">${price != null ? chartFmt(price, dpFor(r, price)) : '–'}</span><div class="lc ${d.ch >= 0 ? 'up' : 'down'}" style="font-size:13px">${d.ch != null ? pct(d.ch, 2) : ''}</div>${extraNote || ''}</div>`;
   }
 
   // One plain sentence for a row: why the word is what it is (numbers from the odds)
@@ -551,8 +555,8 @@
   function levelsHTML(r, dec) {
     if (dec.word !== 'buy' && dec.word !== 'sell') return '';
     const up = dec.word === 'buy', b = dec.c, dir = up ? 'up' : 'down', lt = tvLive(r.x), q = lt && Live.q[lt];
-    const price = (q && q.p) || (r.live ? r.live.p : r.d && r.d.p), dp = price ? decimalsOf(price) : 4;
-    const lvl = f => price ? `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>` : '–';
+    const price = (q && q.p) || (r.live ? r.live.p : r.d && r.d.p), dp = price ? dpFor(r, price) : 4;
+    const lvl = f => price ? `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}" ${dpAttr(r)}` : ''}>${chartFmt(price * f, dp)}</b>` : '–';
     const stop = Math.max(b.stop || 0, 0.05), fs = up ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + (b.typ || 0) / 100;
     return `<div class="olevels"><div><b>What to do:</b> open XTB and tap <b class="${dir}">${up ? 'BUY' : 'SELL'}</b>, put in the stop loss below, and plan to close the trade after ${b.short} (the numbers counted what price did over that time).</div>
       <div><span class="warn">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${up ? 'below' : 'above'} the price, ${up ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
@@ -852,8 +856,8 @@
 
   function probRow({ r, e, dec: D }, sec, side) {
     const buy = side === 'buy', inv = sec === 'inv', lt = tvLive(r.x), b = e.best, hourly = e.src === 'h';
-    const c = lt && Live.q[lt], price = (c && c.p) || (r.live ? r.live.p : r.d.p), dp = decimalsOf(price);
-    const lvl = f => `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>`;
+    const c = lt && Live.q[lt], price = (c && c.p) || (r.live ? r.live.p : r.d.p), dp = dpFor(r, price);
+    const lvl = f => `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}" ${dpAttr(r)}` : ''}>${chartFmt(price * f, dp)}</b>`;
     const stop = Math.max(b.stop || 0, 0.05), fs = buy ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + (b.typ || 0) / 100;
     const dec = D || { word: side, c: b };
     const t = hourly ? tfData(r, '1h') : r.d;
@@ -1121,7 +1125,7 @@
     const buy = a.side === 'buy';
     const what = a.kind === 'setup' ? `${buy ? 'Up' : 'Down'}-side signal score reached ${a.score} on the ${TF_LABEL[a.tf] || a.tf} chart`
       : `${PAT[a.pid] ? PAT[a.pid][0] : a.pid} pattern at a key level on the ${TF_LABEL[a.tf] || a.tf} chart`;
-    const dp = a.price ? decimalsOf(a.price) : 2;
+    const dp = a.price ? dpFor(r, a.price) : 2;
     return `<button class="row brow ${buy ? 'b-up' : 'b-down'}" data-x="${esc(a.x)}" data-tf="${esc(a.tf)}">
       <div class="name"><span class="dec wait sm" title="An alert is a chart signal, not a trade word">${buy ? '▲ UP SIGNAL' : '▼ DOWN SIGNAL'}</span> ${esc(a.n)}<span class="sym">${esc(r ? shownSym(r) : a.x)}</span>
         <div class="faint" style="font-size:12.5px;font-weight:400">${esc(what)} · ${ago(a.at)}</div>
@@ -1177,6 +1181,18 @@
     return { want, q, checks, loadNow: async t => { if (!(t in q)) { pend.add(t); await load(); } return q[t]; } };
   })();
   function decimalsOf(p) { return p >= 1000 ? 2 : p >= 10 ? 2 : p >= 1 ? 4 : 6; }
+  // the decimals the instrument really trades with (USD/JPY 157.238 = 3, EUR/USD 1.08345 = 5), so a
+  // stop loss can be typed into XTB as shown. Comes from TradingView's pricescale and is remembered
+  // between visits. Forex follows XTB's own rule instead (JPY/HUF pairs 3, every other pair 5), because
+  // TradingView's forex feed trims digits (GBP/USD 4) or adds them (USD/ZAR 6).
+  const dpFixed = r => !r ? null : r.ty === 'Forex' ? fxDp(r.x) : XTB_DP[r.x] != null ? XTB_DP[r.x] : null;
+  const dpAttr = r => dpFixed(r) != null ? `data-dp="${dpFixed(r)}"` : '';  // live updates keep XTB's digits
+  function dpFor(r, p) {
+    if (dpFixed(r) != null) return dpFixed(r);
+    const lt = r && tvLive(r.x);
+    if (lt && PDP[lt] != null) return PDP[lt];
+    return r && isStockLike(r) ? 2 : decimalsOf(p);  // XTB quotes shares with 2 decimals
+  }
 
   // ---------------------------------------------------------------- instrument view
   async function loadDetail(x) {
@@ -1268,7 +1284,7 @@
     const stopPct = fromOdds ? oc.stop : Math.max(0.1, (row.d.atrp || 1) * 1.5);
     const side = dec.word === 'sell' || (dec.held && dec.held.side === 'sell') ? 'sell' : 'buy';
     S.planWord = dec.word;
-    const dp = decimalsOf(price);
+    const dp = dpFor(row, price);
     const stop = side === 'buy' ? price * (1 - stopPct / 100) : price * (1 + stopPct / 100);
     const target = side === 'buy' ? price + 2 * (price - stop) : price - 2 * (stop - price);
     return `<div class="card plan" style="grid-column:1/-1"><h3>Plan a trade <small>how big, and where to get out</small></h3>
@@ -1287,7 +1303,7 @@
         In XTB the size is set in <b>lots</b>: check the lot size in the app (stock CFDs are usually 1 share per lot, forex 100,000 units, gold 100 ounces). If your account is in another currency, convert first. ${dl('position-size', 'Why size this way?')}</div></div>`;
   }
 
-  function wirePlan() {
+  function wirePlan(row) {
     if (!$('#pOut')) return;
     const calc = () => {
       const side = $('#pSide').value, bal = +$('#pBal').value, risk = +$('#pRisk').value, e = +$('#pEntry').value, s = +$('#pStop').value, t = +$('#pTarget').value;
@@ -1297,7 +1313,7 @@
         $('#pOut').innerHTML = `<span class="warn">${per <= 0 && e > 0 ? `For a trade ${side === 'buy' ? 'up' : 'down'} the stop loss must be ${side === 'buy' ? 'below' : 'above'} the entry price.` : 'Fill in every box.'}</span>`;
         return;
       }
-      const atRisk = bal * risk / 100, units = atRisk / per, value = units * e, rr = gain / per, dp = decimalsOf(e);
+      const atRisk = bal * risk / 100, units = atRisk / per, value = units * e, rr = gain / per, dp = dpFor(row, e);
       const f = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
       $('#pOut').innerHTML = `<div class="bigscore">
           <div><span class="muted">Size</span><b class="num">${units >= 100 ? f(Math.floor(units)) : +units.toPrecision(3)}</b><span class="faint" style="font-size:12px">units (shares, coins, ounces…)</span></div>
@@ -1311,7 +1327,7 @@
     $('#pSide').onchange = () => {
       // mirror the stop and target to the other side of the entry
       const e = +$('#pEntry').value, s = +$('#pStop').value, t = +$('#pTarget').value;
-      $('#pStop').value = (2 * e - s).toFixed(decimalsOf(e)); $('#pTarget').value = (2 * e - t).toFixed(decimalsOf(e));
+      $('#pStop').value = (2 * e - s).toFixed(dpFor(row, e)); $('#pTarget').value = (2 * e - t).toFixed(dpFor(row, e));
       calc();
     };
     ['pBal', 'pRisk', 'pEntry', 'pStop', 'pTarget'].forEach(id => { $('#' + id).oninput = calc; });
@@ -1340,7 +1356,7 @@
       <div class="ihead">
         <div><h2>${esc(m.name)}</h2>
           <div class="faint" style="font-size:13px">${esc(m.type)} · ${esc(m.market)} · ${[m.cfd ? 'CFD' : '', m.real ? 'Real shares' : ''].filter(Boolean).join(' · ')}</div></div>
-        <div ${lt ? `data-live="${esc(lt)}"` : ''}><span class="big num lp">${chartFmt(price, T.dp)}</span> <span class="lc ${ch >= 0 ? 'up' : 'down'} num">${pct(ch, 2)}</span>
+        <div ${lt ? `data-live="${esc(lt)}" ${dpAttr(row)}` : ''}><span class="big num lp">${chartFmt(price, dpFor(row, price))}</span> <span class="lc ${ch >= 0 ? 'up' : 'down'} num">${pct(ch, 2)}</span>
           <div class="faint lnote" style="font-size:12.5px">${lt ? 'Waiting for live price…' : 'Price from the last scan (no live feed for this one)'}</div></div>
         <div class="spacer"></div>
         <div class="symbox"><span class="faint" style="font-size:13px">${isTV() ? 'TradingView' : 'XTB'} symbol</span> <b>${esc(sym)}</b> <button class="copy" id="copy">Copy</button>
@@ -1377,7 +1393,7 @@
     if (kind === 'tv') tvWidget($('#tvchart'), x, tf);
     Live.paint(); Live.poll();
     document.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { if (!b.disabled) location.hash = `#/i/${encodeURIComponent(x)}/${b.dataset.tf}`; });
-    wirePlan();
+    wirePlan(row);
     { const st = $('#dstrip'); if (st) st.dataset.src = decisionStrip(row); }
     if (row && hasData(row)) {
       if (hourlyCtx()) wantOdds();
@@ -1500,7 +1516,7 @@
     let busy = false, again = false, okAt = 0, failed = 0, timer = null, extra = [], onUpdate = null;
     // TradingView columns. The last five describe the 1H chart for the Good for buying / selling
     // tabs - the same facts engine/odds.py reads from past candles.
-    const COLS = ['close', 'change', 'update_mode', 'Recommend.All', 'SMA50|60', 'SMA50|240', 'RSI|60', 'MACD.macd|60', 'MACD.signal|60'];
+    const COLS = ['close', 'change', 'update_mode', 'Recommend.All', 'SMA50|60', 'SMA50|240', 'RSI|60', 'MACD.macd|60', 'MACD.signal|60', 'pricescale'];
     const TAPE = [['US500', 'S&P 500'], ['US100', 'Nasdaq 100'], ['DE40', 'DAX'], ['JP225', 'Nikkei'], ['GOLD', 'Gold'],
       ['OIL.WTI', 'Oil WTI'], ['EURUSD', 'EUR/USD'], ['USDJPY', 'USD/JPY'], ['BITCOIN', 'Bitcoin'], ['ETHEREUM', 'Ethereum']];
     const tapeItems = () => {
@@ -1508,11 +1524,11 @@
       if (isTV()) t.splice(4, 0, ['SET:SET', 'SET index', ''], ['FX_IDC:USDTHB', 'USD/THB', '']);
       return t;
     };
-    const fmt = p => chartFmt(p, decimalsOf(p));
+    const fmt = (t, p, el) => chartFmt(p, el && el.dataset.dp ? +el.dataset.dp : fxTicker(t) ? fxDp(t) : PDP[t] != null ? PDP[t] : decimalsOf(p));
 
     function renderTape() {
       const items = tapeItems();
-      const one = items.map(([t, n, x]) => `<a class="ti" ${x ? `href="#/i/${encodeURIComponent(x)}/1d"` : `href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(t)}" target="_blank" rel="noopener"`} data-live="${esc(t)}"><b>${esc(n)}</b> <span class="lp num">…</span> <span class="lc num"></span></a>`).join('');
+      const one = items.map(([t, n, x]) => `<a class="ti" ${x ? `href="#/i/${encodeURIComponent(x)}/1d"` : `href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(t)}" target="_blank" rel="noopener"`} data-live="${esc(t)}" ${x && XTB_DP[x] != null ? `data-dp="${XTB_DP[x]}"` : ''}><b>${esc(n)}</b> <span class="lp num">…</span> <span class="lc num"></span></a>`).join('');
       $('#tapeIn').innerHTML = one + one;  // twice, so the scroll loops seamlessly
     }
 
@@ -1537,6 +1553,7 @@
       const tickers = wanted();
       if (!tickers.length) return;
       busy = true;
+      let newDp = false;
       try {
         for (let i = 0; i < tickers.length; i += 400) {
           const res = await fetch(URL_SCAN, { method: 'POST', body: JSON.stringify({ symbols: { tickers: tickers.slice(i, i + 400) }, columns: COLS }) });
@@ -1548,10 +1565,12 @@
             const p = old && old.bin && Date.now() - old.bin < 5000 ? old.p : d[0];
             q[r.s] = { p, ch: d[1], mode: d[2] || '', rec: d[3], at: Date.now(), bin: old && old.bin,
               ind: d[4] == null || d[6] == null || d[7] == null ? null : { sma1: d[4], sma4: d[5], rsi: d[6], macd: d[7], sig: d[8] } };
+            if (d[9] > 0) { const n = fxTicker(r.s) ? fxDp(r.s) : Math.round(Math.log10(d[9])); if (PDP[r.s] !== n) { PDP[r.s] = n; newDp = true; } }
           }
         }
         okAt = Date.now(); failed = 0;
       } catch (e) { failed++; }
+      if (newDp) store.set('pdp', PDP);
       busy = false;
       paint();
       Bin.sync(tickers);
@@ -1593,7 +1612,7 @@
       document.querySelectorAll('[data-live]').forEach(el => {
         const c = q[el.dataset.live];
         if (!c || c.p == null) return;
-        const lp = el.querySelector('.lp'), lc = el.querySelector('.lc'), txt = fmt(c.p);
+        const lp = el.querySelector('.lp'), lc = el.querySelector('.lc'), txt = fmt(el.dataset.live, c.p, el);
         if (lp && lp.textContent !== txt) {
           const before = parseFloat(el.dataset.p);
           lp.textContent = txt;
@@ -1610,7 +1629,7 @@
       // stop / target prices written as "live price x factor"
       document.querySelectorAll('[data-lvl]').forEach(el => {
         const c = q[el.dataset.lvl];
-        if (c && c.p != null) el.textContent = fmt(c.p * +el.dataset.f);
+        if (c && c.p != null) el.textContent = fmt(el.dataset.lvl, c.p * +el.dataset.f, el);
       });
       document.querySelectorAll('[data-rec]').forEach(el => {
         const c = q[el.dataset.rec], l = c && recLabel(c.rec);

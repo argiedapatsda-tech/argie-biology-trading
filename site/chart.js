@@ -199,7 +199,7 @@
   // axis labels only need as many decimals as the grid step has
   function axisDp(step, dp) { return Math.min(dp, Math.max(0, -Math.floor(Math.log10(step) + 1e-9))); }
   function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw))); const f = raw / p; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p; }
-  function fmt(p, dp) { return Number(p).toLocaleString('en-US', { minimumFractionDigits: Math.min(dp, 5), maximumFractionDigits: Math.min(dp, 5) }); }
+  function fmt(p, dp) { return Number(p).toLocaleString('en-US', { minimumFractionDigits: Math.min(dp, 8), maximumFractionDigits: Math.min(dp, 8) }); }
   function tlabel(t, tf) {
     const d = new Date(t * 1000);
     if (tf === '1d' || tf === '1wk') return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
