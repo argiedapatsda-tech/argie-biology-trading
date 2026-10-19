@@ -554,7 +554,7 @@
     const price = (q && q.p) || (r.live ? r.live.p : r.d && r.d.p), dp = price ? decimalsOf(price) : 4;
     const lvl = f => price ? `<b class="num" ${lt ? `data-lvl="${esc(lt)}" data-f="${f}"` : ''}>${chartFmt(price * f, dp)}</b>` : '–';
     const stop = Math.max(b.stop || 0, 0.05), fs = up ? 1 - stop / 100 : 1 + stop / 100, ft = 1 + (b.typ || 0) / 100;
-    return `<div class="olevels"><div>In XTB tap <b class="${dir}">${up ? 'BUY' : 'SELL'}</b>, for ${b.short}:</div>
+    return `<div class="olevels"><div><b>What to do:</b> open XTB and tap <b class="${dir}">${up ? 'BUY' : 'SELL'}</b>, put in the stop loss below, and plan to close the trade after ${b.short} (the numbers counted what price did over that time).</div>
       <div><span class="warn">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${up ? 'below' : 'above'} the price, ${up ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
       <div><span class="${dir}">Typical ${up ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${up ? 'above' : 'below'} the price, ${pct(b.typ, 2)}) · not a promise</span></div>
       <div class="faint" style="font-size:12px">${dl('xtb-price', 'XTB\'s price can differ a little')} from this one: in XTB, put the stop ${stop.toFixed(2)}% ${up ? 'below' : 'above'} the price XTB shows you.</div></div>`;
@@ -819,7 +819,7 @@
       || (sizeTier(a.r) === 0 && isStockLike(a.r) && isStockLike(b.r) ? bySize(a.r, b.r) : 0)
       || (b.e.best.z - a.e.best.z) || (b.e.best.p - a.e.best.p));
     const liveTxt = !hours ? `From each instrument's last scan` : Live.fresh() ? `Facts checked live for ${cnt.live} instruments` : 'Live check not reachable - using the last scan (' + ago(S.odds.generated) + ')';
-    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${inv ? (side === 'buy' ? 'good for buying' : 'to sell') : side === 'buy' ? 'to trade up' : 'to sell'} now${cnt.held ? ` · <span class="warn">${cnt.held.toLocaleString()} WAIT (odds pass, today's chart does not agree yet: see Overview)</span>` : ''} · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
+    $('#oddsStatus').innerHTML = `<span><b class="${side === 'buy' ? 'up' : 'down'}">${good.length.toLocaleString()}</b> ${inv ? (side === 'buy' ? 'good for buying' : 'to sell') : side === 'buy' ? 'to TRADE NOW' : 'to SELL NOW'}${cnt.held ? ` · <span class="warn">${cnt.held.toLocaleString()} WAIT (odds pass, today's chart does not agree yet: see Overview)</span>` : ''} · ${cnt.other.toLocaleString()} with no clear edge · ${cnt.few.toLocaleString()} without enough history</span><span>${liveTxt}</span>`;
     const TOP = 10, lim = S.top ? TOP : S.shown;
     const sig = (S.top ? topEach(good) : good.slice(0, lim)).map(g => g.r.x + ':' + g.e.L + ':' + g.e.best.k).join('|') + '#' + Live.fresh() + '#' + lim + '#' + cnt.held;
     if (sig === S.osig) { Live.paint(); return; }
@@ -828,7 +828,7 @@
     box.innerHTML = good.length ? (S.top
         ? topByKind(good, all, sec, side, inv) + (good.length > TOP ? `<button class="more" id="more">Show all ${good.length.toLocaleString()} in one list</button>` : '')
         : tiered(shown, g => probRow(g, sec, side), g => g.r) + (good.length > shown.length ? `<button class="more" id="more">Show more (${(good.length - shown.length).toLocaleString()} left)</button>` : ''))
-      : `<div class="empty">Nothing is clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'worth a trade up' : 'worth a sell'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
+      : `<div class="empty">Nothing is clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'a TRADE NOW' : 'a SELL NOW'} right now${F(sec).cat !== 'all' || F(sec).q ? ' with these filters' : ''}.
       That is normal. It changes as prices move${hours ? ', and this page re-checks by itself every 15 seconds' : ''}.</div>`;
     box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { location.hash = `#/i/${encodeURIComponent(b.dataset.x)}/${inv ? '1d' : S.btf === '15m' ? '1h' : S.btf}`; });
     const m = $('#more'); if (m) m.onclick = () => { if (S.top) { S.top = false; S.shown = ALL; } else S.shown += 50; renderProb(); };
@@ -846,7 +846,7 @@
       const shut = ty !== 'Crypto' && weekend() ? ` · closed now, reopens ${whenText(nextFlip(fxOpenAt), true)}` : '';
       return `<div class="tierhead">${label} · top ${shown.length} of ${list.length}<span>highest probability first${shut}</span></div>`
         + (shown.length ? shown.map(g => probRow(g, sec, side)).join('')
-          : `<div class="empty">No ${esc(label.replace(/^\S+ /, ''))} clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'worth a trade up' : 'worth a sell'} right now (${pool.toLocaleString()} checked).</div>`);
+          : `<div class="empty">No ${esc(label.replace(/^\S+ /, ''))} clearly ${inv ? (side === 'buy' ? 'good for buying' : 'good for selling') : side === 'buy' ? 'a TRADE NOW' : 'a SELL NOW'} right now (${pool.toLocaleString()} checked).</div>`);
     }).join('');
   }
 
@@ -864,7 +864,7 @@
       ${priceBox(r, `<div class="faint" style="font-size:11px;font-weight:400">${lt ? (lt.startsWith('BINANCE:') ? 'live · every second' : 'live price') : 'last scan price'}</div>`)}
       <div class="why col">${reasonHTML(r, dec, t, null, side)}</div>
       <div class="olevels">
-        <div>${inv ? (buy ? 'If you buy' : 'If you own it') : `If you ${buy ? 'TRADE NOW ▲ (XTB button: BUY)' : 'SELL NOW ▼ (XTB button: SELL)'}`}, for ${b.short}:</div>
+        <div>${inv ? (buy ? 'If you buy' : 'If you own it') : `<b>What to do:</b> open XTB and tap ${buy ? '<b class="up">BUY</b>' : '<b class="down">SELL</b>'}, put in the stop loss below, and plan to close the trade after ${b.short} (the numbers counted what price did over that time)`}${inv ? `, for ${b.short}` : ''}:</div>
         <div><span class="warn">${dl('stop-loss', 'Stop loss')}</span> ${lvl(fs)} <span class="faint">(${buy ? 'below' : 'above'} the price, ${buy ? '−' : '+'}${stop.toFixed(2)}% · 8 of 10 past times never went that far against you)</span></div>
         <div><span class="${buy ? 'up' : 'down'}">Typical ${buy ? 'rise' : 'fall'}</span> to ${lvl(ft)} <span class="faint">(${buy ? 'above' : 'below'} the price, ${pct(b.typ, 2)}) · not a promise</span></div>
         ${inv ? '' : `<div class="faint" style="font-size:12px">${dl('xtb-price', 'XTB\'s price can differ a little')} from this one: in XTB, put the stop ${stop.toFixed(2)}% ${buy ? 'below' : 'above'} the price XTB shows you.</div>`}
