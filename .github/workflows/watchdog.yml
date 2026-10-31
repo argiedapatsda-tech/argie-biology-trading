@@ -29,8 +29,13 @@ jobs:
               -q '.[] | "\(.databaseId) \(.createdAt)"'
           done | while read -r id created; do
             if [ "$(date -u -d "$created" +%s)" -lt "$cutoff" ]; then
-              echo "force-cancelling stuck run $id (created $created)"
-              gh api -X POST "repos/$R/actions/runs/$id/force-cancel" || true
+              # a run stuck at the environment gate refuses force-cancel ("not queued
+              # yet"), so try cancel, then force-cancel, then delete the empty run
+              echo "clearing stuck run $id (created $created)"
+              gh api -X POST "repos/$R/actions/runs/$id/cancel" \
+                || gh api -X POST "repos/$R/actions/runs/$id/force-cancel" \
+                || gh api -X DELETE "repos/$R/actions/runs/$id" \
+                || true
             fi
           done
 
