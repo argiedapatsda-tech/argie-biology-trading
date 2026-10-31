@@ -1,0 +1,51 @@
+name: watchdog
+
+# A scan run once sat "waiting" at the github-pages gate for 9 days (GitHub glitch,
+# no approval needed). timeout-minutes doesn't count until a job starts, and the
+# scan concurrency group made every later scan queue behind it and get cancelled.
+# Every hour: force-cancel scan runs stuck waiting/queued/pending for over 60 min,
+# then restart the chain if no scan is running.
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  unstick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+    steps:
+      - name: Cancel stuck scan runs
+        run: |
+          cutoff=$(date -u -d '60 minutes ago' +%s)
+          for s in waiting queued pending requested; do
+            gh run list -R "$R" -w scan.yml -s $s -L 50 --json databaseId,createdAt \
+              -q '.[] | "\(.databaseId) \(.createdAt)"'
+          done | while read -r id created; do
+            if [ "$(date -u -d "$created" +%s)" -lt "$cutoff" ]; then
+              echo "force-cancelling stuck run $id (created $created)"
+              gh api -X POST "repos/$R/actions/runs/$id/force-cancel" || true
+            fi
+          done
+
+      - name: Restart the scan chain if nothing is running
+        if: vars.CHAIN != 'off'
+        run: |
+          sleep 20
+          busy=0
+          for s in in_progress queued pending waiting; do
+            n=$(gh run list -R "$R" -w scan.yml -s $s --json databaseId -q length)
+            busy=$((busy + ${n:-0}))
+          done
+          if [ "$busy" = "0" ]; then
+            echo "no scan running - starting one"
+            gh workflow run scan.yml -R "$R" --ref main
+          else
+            echo "a scan is already running or queued ($busy)"
+          fi
