@@ -43,9 +43,11 @@ jobs:
         if: vars.CHAIN != 'off'
         run: |
           sleep 20
+          # count only runs from the last 60 min - an older one is stuck, not busy
+          since=$(date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
           busy=0
           for s in in_progress queued pending waiting; do
-            n=$(gh run list -R "$R" -w scan.yml -s $s --json databaseId -q length)
+            n=$(gh run list -R "$R" -w scan.yml -s $s -L 50 --json createdAt               -q "[.[] | select(.createdAt > \"$since\")] | length")
             busy=$((busy + ${n:-0}))
           done
           if [ "$busy" = "0" ]; then

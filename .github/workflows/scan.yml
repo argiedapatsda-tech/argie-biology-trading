@@ -26,7 +26,9 @@ permissions:
   id-token: write
 
 concurrency:
-  group: scan
+  # renamed from 'scan': run 39791381827 is stuck forever at the Pages gate
+  # (GitHub refuses to cancel or delete it) and held the old group
+  group: scan-v2
   cancel-in-progress: false
 
 jobs:
